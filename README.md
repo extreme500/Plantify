@@ -5,7 +5,23 @@ Aplicativo web *mobile-first* de ciência cidadã: mapa com GPS, cadastro rápid
 ficha botânica, instants (fotos rápidas), comentários e verificação por especialistas.
 **Não há servidor**: tudo fica salvo no próprio navegador (IndexedDB), e o "envio" é simulado.
 
-## Como rodar
+## 📱 Usar no celular (sem PC): **https://extreme500.github.io/Plantify/**
+
+O app está publicado no GitHub Pages como **PWA** (aplicativo web instalável). Não precisa de computador:
+
+1. Abra **https://extreme500.github.io/Plantify/** no celular (Chrome no Android, Safari no iPhone).
+2. **Instale na tela inicial** para usar como aplicativo, em tela cheia:
+   - **Android (Chrome):** menu **⋮** → *Instalar app* (ou *Adicionar à tela inicial*).
+   - **iPhone (Safari):** botão **Compartilhar** → *Adicionar à Tela de Início*.
+3. Abra pelo ícone **Plantify** e permita **localização** e **câmera** quando pedir.
+
+Depois do primeiro acesso, o app **abre mesmo sem internet**. As partes do mapa que você já viu
+também ficam guardadas. Cada aparelho tem seus próprios dados (não há servidor).
+
+O site é atualizado automaticamente a cada push na `main` (workflow `.github/workflows/deploy.yml`).
+Se uma versão nova não aparecer, feche o app e abra de novo.
+
+## Rodar no computador (desenvolvimento)
 
 Requer Node 18+.
 
@@ -14,10 +30,11 @@ npm install
 npm run dev            # abre em http://localhost:5173 (no PC aparece numa moldura de celular)
 ```
 
-### Passo a passo para acessar pelo celular
+### Testar no celular a versão do seu computador (opcional)
 
-O computador serve o app e o celular acessa pela rede Wi-Fi. Câmera e GPS do navegador só
-funcionam em **HTTPS**, por isso existe um comando específico para o celular.
+Útil para testar mudanças antes de dar push. O computador serve o app e o celular acessa pela
+rede Wi-Fi. Câmera e GPS do navegador só funcionam em **HTTPS**, por isso existe um comando
+específico para o celular.
 
 1. **Conecte o computador e o celular na mesma rede Wi-Fi.**
    Redes como a *eduroam* costumam bloquear a comunicação entre aparelhos. Se não funcionar, use o
