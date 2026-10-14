@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { MapContainer, Marker, useMapEvents } from 'react-leaflet'
 import {
@@ -80,6 +80,14 @@ export function MapScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state])
 
+  // O filtro ativo fica sempre visível na barra de filtros (ela rola na horizontal).
+  const chipsRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const bar = chipsRef.current
+    const chip = bar?.querySelector<HTMLElement>('.chip.on')
+    if (bar && chip) bar.scrollTo({ left: chip.offsetLeft - bar.offsetLeft - (bar.clientWidth - chip.offsetWidth) / 2, behavior: 'smooth' })
+  }, [filter])
+
   const visible = useMemo(() => trees.filter((t) => matches(t, filter)), [trees, filter])
   const counts = useMemo(() => Object.fromEntries(FILTERS.map((f) => [f.id, trees.filter((t) => matches(t, f.id)).length])), [trees])
   const selected = trees.find((t) => t.id === selectedId) ?? null
@@ -134,7 +142,7 @@ export function MapScreen() {
           <h1>Mapa da Flora</h1>
           <span className="small muted" style={{ fontWeight: 700 }}>{visible.length} {visible.length === 1 ? 'árvore' : 'árvores'}</span>
         </div>
-        <div className="chips" role="radiogroup" aria-label="Filtrar árvores">
+        <div className="chips" role="radiogroup" aria-label="Filtrar árvores" ref={chipsRef}>
           {FILTERS.map((f) => (
             <button key={f.id} role="radio" aria-checked={filter === f.id} className={`chip ${filter === f.id ? 'on' : ''}`} onClick={() => { setFilter(f.id); setSelectedId(null) }} style={{ boxShadow: 'var(--shadow)' }}>
               {f.color && <span className="swatch" style={{ background: f.color, border: '2px solid #fff' }} />}
