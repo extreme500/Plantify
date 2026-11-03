@@ -100,7 +100,12 @@ Para recomeçar do zero: *Configurações → Restaurar dados de demonstração*
 5. **Dra. Olívia (validação)**: saia, crie uma conta **Especialista** → veja a notificação de ponto pendente
    → abra a árvore → *Completar informações* → informe o nome científico → *Atribuir selo "Espécie verificada"*.
    Especialistas também podem marcar **Exótica invasora**.
-6. Use os **filtros** do mapa (Verificadas, Identificadas, Pendentes, Invasoras) e o **Modo escuro**.
+6. **Edição de uma árvore verificada**: como usuário comum, abra uma árvore verificada → *Completar informações*
+   → altere algo e salve. A versão atual perde o selo e fica "aguardando nova verificação", mas a ficha ganha a opção
+   **Último registro verificado**, que mostra a árvore como estava quando recebeu o selo. No filtro **Verificadas**
+   do mapa, é essa versão pré-edição que aparece. Um especialista pode **Verificar esta edição** ou, ao editar,
+   escolher **Manter verificado**. A *Figueira dos macacos* já vem nesse estado nos dados de exemplo.
+7. Use os **filtros** do mapa (Verificadas, Identificadas, Pendentes, Invasoras) e o **Modo escuro**.
 
 ## Estrutura
 

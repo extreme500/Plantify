@@ -2,11 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { MapContainer, Marker, useMapEvents } from 'react-leaflet'
 import {
-  Camera, ChevronRight, CloudOff, CloudUpload, Leaf, LocateFixed, Menu as MenuIcon, MessageCircle,
+  BadgeCheck, Camera, ChevronRight, CloudOff, CloudUpload, Leaf, LocateFixed, Menu as MenuIcon, MessageCircle,
   Navigation, Search, TreeDeciduous, Zap,
 } from 'lucide-react'
 import type { Tree } from '../data/types'
-import { treeStatus } from '../data/types'
+import { editedAfterVerification, hasVerifiedVersion, treeStatus, verifiedVersion } from '../data/types'
 import { CAMPUS_CENTER } from '../data/campus'
 import { useMe, useMyNotifications, useOnline, usePendingCount, useStore } from '../store/store'
 import { distance, formatDistance } from '../lib/util'
@@ -28,7 +28,14 @@ const FILTERS: { id: Filter; label: string; color?: string }[] = [
 function matches(t: Tree, f: Filter) {
   if (f === 'todas') return true
   if (f === 'invasora') return t.invasive
+  // Árvores editadas depois de verificadas continuam em "Verificadas", pelo último registro verificado.
+  if (f === 'verificada') return hasVerifiedVersion(t)
   return treeStatus(t) === f
+}
+
+/** Como a árvore aparece no mapa: no filtro "Verificadas", sempre pela versão verificada. */
+function displayVersion(t: Tree, f: Filter): Tree {
+  return f === 'verificada' ? verifiedVersion(t) ?? t : t
 }
 
 // Mantém a câmera do mapa e o filtro ao navegar para outras telas e voltar.
@@ -68,13 +75,15 @@ export function MapScreen() {
 
   // Ao voltar de um cadastro/ficha com { focus: id }, centraliza e abre a prévia da árvore.
   useEffect(() => {
-    const focus = (location.state as { focus?: string } | null)?.focus
-    if (!focus) return
-    const t = trees.find((x) => x.id === focus)
+    const state = location.state as { focus?: string; filter?: Filter } | null
+    if (!state?.focus) return
+    const t = trees.find((x) => x.id === state.focus)
     if (t) {
-      setFilter('todas')
+      const f = state.filter ?? 'todas'
+      const shown = displayVersion(t, f)
+      setFilter(f)
       setSelectedId(t.id)
-      setFlyTarget({ pos: [t.lat, t.lng], zoom: 18 })
+      setFlyTarget({ pos: [shown.lat, shown.lng], zoom: 18 })
     }
     nav('.', { replace: true, state: null })
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -88,9 +97,11 @@ export function MapScreen() {
     if (bar && chip) bar.scrollTo({ left: chip.offsetLeft - bar.offsetLeft - (bar.clientWidth - chip.offsetWidth) / 2, behavior: 'smooth' })
   }, [filter])
 
-  const visible = useMemo(() => trees.filter((t) => matches(t, filter)), [trees, filter])
+  const visible = useMemo(() => trees.filter((t) => matches(t, filter)).map((t) => displayVersion(t, filter)), [trees, filter])
   const counts = useMemo(() => Object.fromEntries(FILTERS.map((f) => [f.id, trees.filter((t) => matches(t, f.id)).length])), [trees])
-  const selected = trees.find((t) => t.id === selectedId) ?? null
+  const selected = visible.find((t) => t.id === selectedId) ?? trees.find((t) => t.id === selectedId) ?? null
+  // No filtro "Verificadas", uma árvore editada depois da verificação aparece pelo último registro verificado.
+  const selectedIsVerifiedView = !!selected && filter === 'verificada' && editedAfterVerification(trees.find((t) => t.id === selected.id)!)
 
   function startAdd() {
     guard('Para cadastrar uma árvore, entre na sua conta (leva poucos segundos).', () => {
@@ -114,7 +125,7 @@ export function MapScreen() {
           <FlyTo target={flyTarget?.pos ?? null} zoom={flyTarget?.zoom} />
           {visible.map((t) => (
             <Marker
-              key={t.id + t.updatedAt + (t.id === selectedId)}
+              key={t.id + t.updatedAt + filter + (t.id === selectedId)}
               position={[t.lat, t.lng]}
               icon={treeIcon(t, t.id === selectedId)}
               eventHandlers={{ click: () => setSelectedId(t.id) }}
@@ -183,7 +194,7 @@ export function MapScreen() {
       )}
 
       {selected && (
-        <TreePreview tree={selected} onClose={() => setSelectedId(null)}
+        <TreePreview tree={selected} verifiedView={selectedIsVerifiedView} onClose={() => setSelectedId(null)}
           dist={distance(position.pos, [selected.lat, selected.lng])}
           nInstants={instants.filter((i) => i.treeId === selected.id).length}
           nComments={comments.filter((c) => c.treeId === selected.id).length}
@@ -230,8 +241,8 @@ export function MapScreen() {
 }
 
 /** Bottom sheet exibido ao tocar num marcador (fotos + taxonomia, como no diagrama de atividades). */
-function TreePreview({ tree, dist, nInstants, nComments, onClose }: {
-  tree: Tree; dist: number; nInstants: number; nComments: number; onClose: () => void
+function TreePreview({ tree, verifiedView, dist, nInstants, nComments, onClose }: {
+  tree: Tree; verifiedView: boolean; dist: number; nInstants: number; nComments: number; onClose: () => void
 }) {
   const nav = useNavigate()
   return (
@@ -244,12 +255,17 @@ function TreePreview({ tree, dist, nInstants, nComments, onClose }: {
             <h2 style={{ fontSize: '1.2rem' }}>{tree.nicknames[0]}</h2>
             <div className="italic muted">{tree.scientificName || 'Espécie ainda não identificada'}{tree.family && <span style={{ fontStyle: 'normal' }}> · {tree.family}</span>}</div>
             <StatusBadges tree={tree} compact />
+            {verifiedView && (
+              <div className="small" style={{ color: 'var(--verified)', fontWeight: 700 }}>
+                <BadgeCheck size={14} style={{ verticalAlign: '-2px' }} /> Último registro verificado · há uma edição mais recente
+              </div>
+            )}
             <div className="small muted">{formatDistance(dist)} de você</div>
           </div>
           <button className="icon-btn" aria-label="Fechar prévia" onClick={onClose} style={{ marginTop: -6 }}>✕</button>
         </div>
         <div className="row" style={{ marginTop: 14 }}>
-          <button className="btn primary grow" onClick={() => nav(`/arvore/${tree.id}`)}><Leaf size={20} /> Ver ficha</button>
+          <button className="btn primary grow" onClick={() => nav(verifiedView ? `/arvore/${tree.id}?versao=verificada` : `/arvore/${tree.id}`)}><Leaf size={20} /> Ver ficha</button>
           <button className="btn outline" onClick={() => nav(`/arvore/${tree.id}/instants`)} aria-label={`Instants (${nInstants})`}><Camera size={20} /> {nInstants}</button>
           <button className="btn outline" onClick={() => nav(`/arvore/${tree.id}/comentarios`)} aria-label={`Comentários (${nComments})`}><MessageCircle size={20} /> {nComments}</button>
         </div>

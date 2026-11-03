@@ -1,7 +1,26 @@
 import type { DB, Tree, User } from './types'
+import { treeContent } from './types'
 import { suggestedSources } from './species'
 
-export const DB_VERSION = 1
+/** v2: histórico de verificação (último registro verificado preservado após edições). */
+export const DB_VERSION = 2
+
+/** Guarda o registro atual como "último registro verificado" das árvores que já têm selo. */
+function withVerifiedSnapshot(t: Tree): Tree {
+  if (!t.verifiedBy || t.verifiedSnapshot) return t
+  return { ...t, verifiedSnapshot: { ...treeContent(t), verifiedBy: t.verifiedBy, verifiedAt: t.verifiedAt ?? t.updatedAt } }
+}
+
+/** Atualiza dados salvos por versões anteriores do protótipo sem apagar o que o usuário cadastrou. */
+export function migrateDb(db: DB): DB | null {
+  if (db.version === 1) {
+    const trees = db.trees.map((t) =>
+      withVerifiedSnapshot({ ...t, verifiedSnapshot: null, lastEditedBy: null, lastEditedAt: null }),
+    )
+    return { ...db, trees, version: DB_VERSION }
+  }
+  return null
+}
 
 const MIN = 60_000
 const HOUR = 60 * MIN
@@ -25,13 +44,13 @@ export function createSeed(now = Date.now()): DB {
   ]
 
   const base = {
-    verifiedBy: null, verifiedAt: null, invasive: false, sync: 'synced' as const,
-    characteristics: '', sources: [], family: '', scientificName: '',
+    verifiedBy: null, verifiedAt: null, verifiedSnapshot: null, lastEditedBy: null, lastEditedAt: null,
+    invasive: false, sync: 'synced' as const, characteristics: '', sources: [], family: '', scientificName: '',
   }
   const verified = (daysAgo: number) => ({ verifiedBy: 'u-olivia', verifiedAt: now - daysAgo * DAY })
   const src = (sci: string) => suggestedSources(sci)
 
-  const trees: Tree[] = [
+  const rawTrees: Tree[] = [
     {
       ...base, ...verified(40), id: 't-araucaria',
       nicknames: ['Amigo do Couto', 'Gotinha', "Oliver's Tree", 'Berço de Pedrinho'],
@@ -109,6 +128,22 @@ export function createSeed(now = Date.now()): DB {
     },
   ]
 
+  // Exemplo de árvore editada depois de verificada: a Figueira foi verificada pela Dra. Olívia
+  // e, ontem, o Lucas trocou a foto, acrescentou um apelido e uma informação sem fonte. A versão
+  // atual aguarda nova verificação; a verificada continua disponível na ficha e no filtro.
+  const trees = rawTrees.map(withVerifiedSnapshot).map((t): Tree =>
+    t.id !== 't-figueira'
+      ? t
+      : {
+          ...t,
+          nicknames: ['Figueira dos macacos', 'Casa dos bugios'],
+          characteristics: `${t.characteristics} Dizem que ela tem mais de 80 anos e que foi plantada na inauguração do campus.`,
+          photo: 'art:figueira:tarde:none',
+          verifiedBy: null, verifiedAt: null,
+          lastEditedBy: 'u-lucas', lastEditedAt: now - DAY, updatedAt: now - DAY,
+        },
+  )
+
   const d = (iso: string) => new Date(iso).getTime()
   const comments = [
     { treeId: 't-araucaria', userId: 'u-pedrinho', createdAt: d('2026-09-08T10:12:00-03:00'), text: 'Essa árvore é a minha favorita do campus! Ela lembra a minha cidade natal!!' },
@@ -133,6 +168,7 @@ export function createSeed(now = Date.now()): DB {
   const notifications = [
     { id: 'n-0', to: 'especialistas', treeId: 't-misterio', text: 'Novo ponto com identificação pendente: "Árvore de flores rosadas".', createdAt: now - 3 * HOUR, readBy: [] },
     { id: 'n-1', to: 'especialistas', treeId: 't-torta', text: 'Novo ponto com identificação pendente: "Árvore torta do RU6".', createdAt: now - 2 * DAY, readBy: [] },
+    { id: 'n-2', to: 'especialistas', treeId: 't-figueira', text: 'A árvore verificada "Figueira dos macacos" foi editada e aguarda nova verificação.', createdAt: now - DAY, readBy: [] },
   ]
 
   return { version: DB_VERSION, users, trees, comments, instants, notifications }

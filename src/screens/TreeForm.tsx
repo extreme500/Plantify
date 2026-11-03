@@ -1,9 +1,10 @@
 import { useRef, useState } from 'react'
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom'
-import { AlertTriangle, Camera as CameraIcon, ChevronDown, ChevronUp, Link2, Lock, Plus, Save, Sparkles, Trash2, X } from 'lucide-react'
+import { AlertTriangle, BadgeCheck, Camera as CameraIcon, ChevronDown, ChevronUp, History, Link2, Lock, Plus, Save, Sparkles, Trash2, X } from 'lucide-react'
 import type { Source } from '../data/types'
+import { hasVerifiedVersion } from '../data/types'
 import { findSpecies, searchSpecies, suggestedSources, type Species } from '../data/species'
-import { isOnline, useMe, useStore } from '../store/store'
+import { isOnline, useMe, useStore, type EditResult } from '../store/store'
 import { distance, formatDistance } from '../lib/util'
 import { photoSrc } from '../lib/art'
 import { Camera } from '../components/Camera'
@@ -11,6 +12,13 @@ import { LocationPicker } from '../components/mapParts'
 import { ScreenHeader, Toggle } from '../components/ui'
 import { useSubmitFlow } from './Result'
 import { DEFAULT_NICKNAME } from './QuickAdd'
+
+const EDIT_MESSAGES: Record<EditResult, [string, 'info' | 'success']> = {
+  unchanged: ['Nenhuma alteração para salvar.', 'info'],
+  saved: ['Informações salvas.', 'success'],
+  'needs-verification': ['Edição salva. A árvore aguarda nova verificação; o último registro verificado continua disponível.', 'info'],
+  verified: ['Edição salva como o novo registro verificado.', 'success'],
+}
 
 interface Prefill { photo?: string; pos?: [number, number]; nickname?: string }
 
@@ -23,7 +31,7 @@ export function TreeForm({ mode }: { mode: 'create' | 'edit' }) {
   const tree = useStore((s) => s.db.trees.find((t) => t.id === id))
   const position = useStore((s) => s.position)
   const addTree = useStore((s) => s.addTree)
-  const updateTree = useStore((s) => s.updateTree)
+  const editTree = useStore((s) => s.editTree)
   const toast = useStore((s) => s.toast)
   const { run, overlay } = useSubmitFlow()
   const topRef = useRef<HTMLDivElement>(null)
@@ -49,11 +57,16 @@ export function TreeForm({ mode }: { mode: 'create' | 'edit' }) {
   const [camera, setCamera] = useState(false)
   const [picking, setPicking] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
+  // Especialista editando uma árvore verificada escolhe se a edição já fica verificada.
+  const [keepVerified, setKeepVerified] = useState(!!(editing && tree.verifiedBy))
 
   if (mode === 'edit' && !tree) return <Navigate to="/" replace />
 
   const isSpecialist = me?.role === 'especialista'
-  const lockedTaxonomy = !!(editing && tree.verifiedBy && !isSpecialist)
+  const verifiedLineage = !!(editing && hasVerifiedVersion(tree))
+  // Só especialistas mudam a espécie de uma árvore que tem versão verificada.
+  const lockedTaxonomy = verifiedLineage && !isSpecialist
+  const canKeepVerified = verifiedLineage && isSpecialist && !!sci.trim()
   const finalPos: [number, number] = locMode === 'atual' ? position.pos : pos ?? position.pos
   const catalog = findSpecies(sci)
 
@@ -95,10 +108,10 @@ export function TreeForm({ mode }: { mode: 'create' | 'edit' }) {
       sources, lat: finalPos[0], lng: finalPos[1], photo: photo!, invasive,
     }
     if (editing) {
-      // Mudar a espécie de uma árvore verificada remove o selo (precisa de nova verificação).
-      const taxonomyChanged = tree.verifiedBy && data.scientificName !== tree.scientificName
-      updateTree(tree.id, { ...data, ...(taxonomyChanged ? { verifiedBy: null, verifiedAt: null } : {}) })
-      toast(isOnline(useStore.getState()) ? 'Informações salvas.' : 'Salvo no aparelho. Será enviado quando a conexão voltar.', isOnline(useStore.getState()) ? 'success' : 'warning')
+      const result = editTree(tree.id, data, { verify: canKeepVerified && keepVerified })
+      const [text, kind] = EDIT_MESSAGES[result]
+      const offline = result !== 'unchanged' && !isOnline(useStore.getState())
+      toast(offline ? `${text} Salvo no aparelho; será enviado quando a conexão voltar.` : text, offline ? 'warning' : kind)
       nav(-1)
     } else {
       run('tree', () => {
@@ -121,6 +134,17 @@ export function TreeForm({ mode }: { mode: 'create' | 'edit' }) {
       />
       <div className="scroll">
         <div className="pad stack" ref={topRef}>
+          {verifiedLineage && !isSpecialist && (
+            <div className="card row small" style={{ alignItems: 'flex-start', borderColor: 'var(--identified)' }}>
+              <History color="var(--identified)" style={{ flexShrink: 0 }} />
+              <span>
+                {tree.verifiedBy
+                  ? <>Esta árvore tem o selo de <strong>Espécie verificada</strong>. Se você alterar algo, ela fica aguardando nova verificação de um especialista.</>
+                  : <>Esta árvore foi editada depois da verificação e aguarda um especialista. Suas alterações entram na versão atual.</>}
+                {' '}O <strong>último registro verificado</strong> continua disponível na ficha.
+              </span>
+            </div>
+          )}
           <div className="profile-top">
             <div className="stack" style={{ gap: 4, alignItems: 'center' }}>
               <button type="button" className={`photo-circle ${photo ? 'has' : ''} ${errors.photo ? 'error' : ''}`} onClick={() => setCamera(true)} aria-label={photo ? 'Trocar foto' : 'Tirar foto'}>
@@ -185,7 +209,6 @@ export function TreeForm({ mode }: { mode: 'create' | 'edit' }) {
               <label htmlFor="sci">Nome científico</label>
               <input id="sci" className="input italic" placeholder="Gênero espécie (ex.: Araucaria angustifolia)" value={sci} readOnly={lockedTaxonomy} onChange={(e) => setSci(e.target.value)} />
               {!sci.trim() && <span className="hint">Se não souber, deixe vazio: a árvore fica como “Identificação pendente”.</span>}
-              {editing && tree.verifiedBy && isSpecialist && sci.trim() !== tree.scientificName && <span className="err-msg">Alterar a espécie removerá o selo de verificação.</span>}
             </div>
             <div className="field">
               <label htmlFor="fam">Família</label>
@@ -258,6 +281,17 @@ export function TreeForm({ mode }: { mode: 'create' | 'edit' }) {
           </div>
         </div>
       </div>
+      {canKeepVerified && (
+        <div className="settings-row" style={{ padding: '8px 16px', background: 'var(--primary-soft)', borderTop: '1px solid var(--border)' }}>
+          <span className="sr-text">
+            <strong><BadgeCheck size={16} style={{ verticalAlign: '-3px' }} /> {tree.verifiedBy ? 'Manter verificado' : 'Verificar ao salvar'}</strong>
+            <span className="small muted">
+              {keepVerified ? 'Sua edição vira o novo registro verificado.' : 'A edição ficará aguardando nova verificação.'}
+            </span>
+          </span>
+          <Toggle checked={keepVerified} onChange={setKeepVerified} label={tree.verifiedBy ? 'Manter verificado' : 'Verificar ao salvar'} />
+        </div>
+      )}
       <div className="sticky-foot">
         <button className="btn outline" onClick={() => nav(-1)}>Cancelar</button>
         <button className="btn primary grow" onClick={save}><Save size={20} /> {editing ? 'Salvar alterações' : 'Salvar registro'}</button>

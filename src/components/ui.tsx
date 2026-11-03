@@ -1,11 +1,11 @@
 import { type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  AlertTriangle, ArrowLeft, BadgeCheck, Camera, CheckCircle2, CloudOff, HelpCircle, Info,
+  AlertTriangle, ArrowLeft, BadgeCheck, Camera, CheckCircle2, CloudOff, HelpCircle, History, Info,
   Leaf, MessageCircle, Microscope, Search, X,
 } from 'lucide-react'
 import type { Tree, User } from '../data/types'
-import { treeStatus } from '../data/types'
+import { editedAfterVerification, treeStatus } from '../data/types'
 import { initials } from '../lib/util'
 import { photoSrc } from '../lib/art'
 import { useStore } from '../store/store'
@@ -66,11 +66,13 @@ export function userName(u?: Pick<User, 'firstName' | 'lastName'> | null) {
 
 export function StatusBadges({ tree, compact }: { tree: Tree; compact?: boolean }) {
   const st = treeStatus(tree)
+  const edited = editedAfterVerification(tree)
   return (
     <span className="row" style={{ flexWrap: 'wrap', gap: 6 }}>
       {st === 'verificada' && <span className="badge verificada"><BadgeCheck size={14} /> Espécie verificada</span>}
-      {st === 'identificada' && <span className="badge identificada"><Search size={14} /> {compact ? 'Aguardando verificação' : 'Identificada · aguardando verificação'}</span>}
-      {st === 'pendente' && <span className="badge pendente"><HelpCircle size={14} /> Identificação pendente</span>}
+      {edited && <span className="badge identificada"><History size={14} /> {compact ? 'Editada após verificação' : 'Editada · aguardando nova verificação'}</span>}
+      {!edited && st === 'identificada' && <span className="badge identificada"><Search size={14} /> {compact ? 'Aguardando verificação' : 'Identificada · aguardando verificação'}</span>}
+      {!edited && st === 'pendente' && <span className="badge pendente"><HelpCircle size={14} /> Identificação pendente</span>}
       {tree.invasive && <span className="badge invasive"><AlertTriangle size={14} /> Exótica invasora</span>}
       {tree.sync === 'pending' && <span className="badge sync"><CloudOff size={14} /> Aguardando envio</span>}
     </span>

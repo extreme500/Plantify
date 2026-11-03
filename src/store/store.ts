@@ -1,7 +1,8 @@
 import { create } from 'zustand'
 import { get as idbGet, set as idbSet } from 'idb-keyval'
-import type { AppNotification, Comment, DB, Instant, Settings, Tree, User } from '../data/types'
-import { createSeed, DB_VERSION } from '../data/seed'
+import type { AppNotification, Comment, DB, Instant, Settings, Tree, TreeContent, User } from '../data/types'
+import { sameContent, treeContent } from '../data/types'
+import { createSeed, DB_VERSION, migrateDb } from '../data/seed'
 import { SIMULATED_START } from '../data/campus'
 import { uid } from '../lib/util'
 
@@ -23,6 +24,9 @@ export interface Position {
   reason?: string
   accuracy?: number
 }
+
+/** unchanged: nada mudou · saved: edição comum · needs-verification: perdeu o selo · verified: edição já verificada. */
+export type EditResult = 'unchanged' | 'saved' | 'needs-verification' | 'verified'
 
 interface State {
   ready: boolean
@@ -54,9 +58,17 @@ interface State {
   updateProfile(id: string, data: Partial<User>): void
   logout(): void
 
-  addTree(data: Omit<Tree, 'id' | 'createdAt' | 'updatedAt' | 'sync' | 'verifiedBy' | 'verifiedAt'>): Tree
+  addTree(data: TreeContent & Pick<Tree, 'createdBy'>): Tree
   updateTree(id: string, data: Partial<Tree>, opts?: { silent?: boolean }): void
+  /**
+   * Salva uma edição feita pelo formulário "Completar informações".
+   * Se a árvore estava verificada, a versão atual perde o selo e o último registro verificado
+   * fica guardado — a não ser que um especialista escolha manter a edição verificada (`verify`).
+   */
+  editTree(id: string, content: TreeContent, opts?: { verify?: boolean }): EditResult
   verifyTree(id: string, verified: boolean): void
+  /** Curadoria: o alerta de invasora vale também para o último registro verificado. */
+  setInvasive(id: string, invasive: boolean): void
   addComment(treeId: string, text: string): Comment
   addInstant(data: Pick<Instant, 'treeId' | 'photo' | 'tag' | 'caption'>): Instant
   deleteInstant(id: string): void
@@ -133,7 +145,11 @@ export const useStore = create<State>((set, get) => {
       } catch (e) {
         console.error(e)
       }
-      if (!db || db.version !== DB_VERSION) {
+      if (db && db.version !== DB_VERSION) {
+        db = migrateDb(db) ?? undefined
+        if (db) persistDb(db)
+      }
+      if (!db) {
         db = createSeed()
         persistDb(db)
       }
@@ -210,7 +226,8 @@ export const useStore = create<State>((set, get) => {
       const now = Date.now()
       const tree: Tree = {
         ...data, id: uid('t-'), createdAt: now, updatedAt: now,
-        verifiedBy: null, verifiedAt: null, sync: online() ? 'synced' : 'pending',
+        verifiedBy: null, verifiedAt: null, verifiedSnapshot: null, lastEditedBy: null, lastEditedAt: null,
+        sync: online() ? 'synced' : 'pending',
       }
       mutate((db) => ({ ...db, trees: [...db.trees, tree] }))
       if (!tree.scientificName.trim()) {
@@ -228,12 +245,56 @@ export const useStore = create<State>((set, get) => {
         notify({ to: before.createdBy, treeId: id, text: `Alguém completou informações de "${before.nicknames[0]}".` })
       }
     },
+    editTree(id, content, opts) {
+      const t = get().db.trees.find((x) => x.id === id)
+      if (!t) return 'unchanged'
+      const changed = !sameContent(content, t)
+      const now = Date.now()
+      const edit = { ...treeContent(content), lastEditedBy: me(), lastEditedAt: now }
+
+      if (opts?.verify) {
+        // Especialista escolheu "manter verificado": a edição vira o novo registro verificado.
+        if (!changed && t.verifiedBy) return 'unchanged'
+        get().updateTree(id, {
+          ...edit, verifiedBy: me(), verifiedAt: now,
+          verifiedSnapshot: { ...treeContent(content), verifiedBy: me()!, verifiedAt: now },
+        })
+        return 'verified'
+      }
+      if (!changed) return 'unchanged'
+      if (t.verifiedBy) {
+        // A versão atual perde o selo; o último registro verificado continua guardado.
+        const snapshot = t.verifiedSnapshot ?? { ...treeContent(t), verifiedBy: t.verifiedBy, verifiedAt: t.verifiedAt ?? now }
+        get().updateTree(id, { ...edit, verifiedBy: null, verifiedAt: null, verifiedSnapshot: snapshot })
+        notify({ to: 'especialistas', treeId: id, text: `A árvore verificada "${t.nicknames[0]}" foi editada e aguarda nova verificação.` })
+        return 'needs-verification'
+      }
+      get().updateTree(id, edit)
+      return 'saved'
+    },
     verifyTree(id, verified) {
       const t = get().db.trees.find((x) => x.id === id)
-      get().updateTree(id, verified ? { verifiedBy: me(), verifiedAt: Date.now() } : { verifiedBy: null, verifiedAt: null }, { silent: true })
-      if (t && verified && t.createdBy !== me()) {
+      if (!t) return
+      const now = Date.now()
+      get().updateTree(
+        id,
+        verified
+          ? { verifiedBy: me(), verifiedAt: now, verifiedSnapshot: { ...treeContent(t), verifiedBy: me()!, verifiedAt: now } }
+          : { verifiedBy: null, verifiedAt: null, verifiedSnapshot: null },
+        { silent: true },
+      )
+      if (verified && t.createdBy !== me()) {
         notify({ to: t.createdBy, treeId: id, text: `Seu registro "${t.nicknames[0]}" recebeu o selo de Espécie Verificada!` })
       }
+    },
+    setInvasive(id, invasive) {
+      const t = get().db.trees.find((x) => x.id === id)
+      if (!t) return
+      get().updateTree(
+        id,
+        { invasive, verifiedSnapshot: t.verifiedSnapshot ? { ...t.verifiedSnapshot, invasive } : null },
+        { silent: true },
+      )
     },
     addComment(treeId, text) {
       const c: Comment = { id: uid('c-'), treeId, userId: me()!, text, createdAt: Date.now(), sync: online() ? 'synced' : 'pending' }

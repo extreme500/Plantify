@@ -21,8 +21,8 @@ export interface Source {
   url: string
 }
 
-export interface Tree {
-  id: string
+/** Campos editáveis de um registro de árvore (o que a comunidade preenche e o especialista verifica). */
+export interface TreeContent {
   /** O primeiro é o apelido principal; os demais aparecem como "AKA". */
   nicknames: string[]
   scientificName: string
@@ -32,9 +32,27 @@ export interface Tree {
   lat: number
   lng: number
   photo: string
+  invasive: boolean
+}
+
+/** Cópia do registro no momento em que recebeu o selo de verificação. */
+export interface VerifiedSnapshot extends TreeContent {
+  verifiedBy: string
+  verifiedAt: number
+}
+
+export interface Tree extends TreeContent {
+  id: string
+  /** Preenchidos quando a versão ATUAL do registro está verificada. */
   verifiedBy: string | null
   verifiedAt: number | null
-  invasive: boolean
+  /**
+   * Último registro verificado. Continua guardado quando alguém edita a árvore depois da
+   * verificação: a versão atual perde o selo, mas esta cópia segue disponível na ficha e no filtro.
+   */
+  verifiedSnapshot: VerifiedSnapshot | null
+  lastEditedBy: string | null
+  lastEditedAt: number | null
   createdBy: string
   createdAt: number
   updatedAt: number
@@ -103,4 +121,36 @@ export function treeStatus(t: Tree): TreeStatus {
   if (t.verifiedBy) return 'verificada'
   if (t.scientificName.trim()) return 'identificada'
   return 'pendente'
+}
+
+export function treeContent(t: TreeContent): TreeContent {
+  return {
+    nicknames: t.nicknames, scientificName: t.scientificName, family: t.family, characteristics: t.characteristics,
+    sources: t.sources, lat: t.lat, lng: t.lng, photo: t.photo, invasive: t.invasive,
+  }
+}
+
+export function sameContent(a: TreeContent, b: TreeContent): boolean {
+  return JSON.stringify(treeContent(a)) === JSON.stringify(treeContent(b))
+}
+
+/** A árvore foi editada depois de verificada: a versão atual aguarda nova verificação. */
+export function editedAfterVerification(t: Tree): boolean {
+  return !t.verifiedBy && !!t.verifiedSnapshot
+}
+
+/** A árvore tem uma versão verificada (a atual ou o último registro verificado). */
+export function hasVerifiedVersion(t: Tree): boolean {
+  return !!t.verifiedBy || !!t.verifiedSnapshot
+}
+
+/**
+ * A árvore como estava no último registro verificado (para a ficha e o filtro "Verificadas").
+ * Se a versão atual já é a verificada, devolve a própria árvore.
+ */
+export function verifiedVersion(t: Tree): Tree | null {
+  if (t.verifiedBy) return t
+  const s = t.verifiedSnapshot
+  if (!s) return null
+  return { ...t, ...treeContent(s), verifiedBy: s.verifiedBy, verifiedAt: s.verifiedAt }
 }
