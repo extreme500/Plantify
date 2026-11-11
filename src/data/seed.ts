@@ -1,26 +1,56 @@
-import type { DB, Tree, User } from './types'
+import type { DB, Report, Tree, User } from './types'
 import { treeContent } from './types'
 import { suggestedSources } from './species'
 
-/** v2: histórico de verificação (último registro verificado preservado após edições). */
-export const DB_VERSION = 2
+/**
+ * v2: último registro verificado preservado após edições.
+ * v3: edições em árvores verificadas viram sugestões (a versão verificada continua publicada),
+ *     moderação (denúncias, contas suspensas) e contribuições por usuário.
+ */
+export const DB_VERSION = 3
 
-/** Guarda o registro atual como "último registro verificado" das árvores que já têm selo. */
-function withVerifiedSnapshot(t: Tree): Tree {
-  if (!t.verifiedBy || t.verifiedSnapshot) return t
-  return { ...t, verifiedSnapshot: { ...treeContent(t), verifiedBy: t.verifiedBy, verifiedAt: t.verifiedAt ?? t.updatedAt } }
-}
+/** Conta de moderação da demonstração (moderadores não se cadastram: são definidos pela instituição). */
+export const DEMO_ADMIN = { email: 'moderacao@plantify.app', password: 'moderacao' }
 
-/** Atualiza dados salvos por versões anteriores do protótipo sem apagar o que o usuário cadastrou. */
-export function migrateDb(db: DB): DB | null {
-  if (db.version === 1) {
-    const trees = db.trees.map((t) =>
-      withVerifiedSnapshot({ ...t, verifiedSnapshot: null, lastEditedBy: null, lastEditedAt: null }),
-    )
-    return { ...db, trees, version: DB_VERSION }
+function adminUser(): User {
+  return {
+    id: 'u-admin', firstName: 'Moderação', lastName: 'Plantify', email: DEMO_ADMIN.email, password: DEMO_ADMIN.password,
+    bio: 'Equipe de moderação da comunidade.', avatar: null, role: 'comum', admin: true, banned: null, createdAt: Date.now() - 120 * DAY,
   }
-  return null
 }
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+/** Atualiza dados salvos por versões anteriores do protótipo sem apagar o que o usuário cadastrou. */
+export function migrateDb(db: any): DB | null {
+  if (db.version !== 1 && db.version !== 2) return null
+  let n = 0
+  const trees: Tree[] = db.trees.map((t: any) => {
+    const { verifiedSnapshot: snap, ...rest } = t
+    const base: Tree = {
+      ...rest,
+      lastEditedBy: t.lastEditedBy ?? null,
+      lastEditedAt: t.lastEditedAt ?? null,
+      contributors: [...new Set([t.createdBy, t.lastEditedBy].filter(Boolean))] as string[],
+      suggestions: [],
+    }
+    if (snap && !t.verifiedBy) {
+      // v2: árvore editada depois de verificada. Agora a versão verificada volta a ser a publicada
+      // e a edição vira uma sugestão aguardando revisão.
+      return {
+        ...base, ...treeContent(snap), verifiedBy: snap.verifiedBy, verifiedAt: snap.verifiedAt,
+        suggestions: [{
+          id: `s-mig-${n++}`, by: t.lastEditedBy ?? t.createdBy, at: t.lastEditedAt ?? t.updatedAt,
+          content: treeContent(t), baseVerifiedAt: snap.verifiedAt,
+        }],
+      }
+    }
+    return base
+  })
+  const users: User[] = db.users.map((u: any) => ({ admin: false, banned: null, ...u }))
+  if (!users.some((u) => u.admin)) users.push(adminUser())
+  return { ...db, version: DB_VERSION, trees, users, reports: db.reports ?? [] }
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
 
 const MIN = 60_000
 const HOUR = 60 * MIN
@@ -41,10 +71,12 @@ export function createSeed(now = Date.now()): DB {
     user('u-couto', 'Couto', 'Ramos', 'comum', 'Amigo da araucária.'),
     user('u-eduardo', 'Eduardo', 'Mello', 'comum', ''),
     user('u-sofia', 'Sofia', 'Andrade', 'comum', ''),
+    user('u-promo', 'Rafa', 'Promoções', 'comum', ''),
+    adminUser(),
   ]
 
   const base = {
-    verifiedBy: null, verifiedAt: null, verifiedSnapshot: null, lastEditedBy: null, lastEditedAt: null,
+    verifiedBy: null, verifiedAt: null, suggestions: [], contributors: [], lastEditedBy: null, lastEditedAt: null,
     invasive: false, sync: 'synced' as const, characteristics: '', sources: [], family: '', scientificName: '',
   }
   const verified = (daysAgo: number) => ({ verifiedBy: 'u-olivia', verifiedAt: now - daysAgo * DAY })
@@ -128,21 +160,25 @@ export function createSeed(now = Date.now()): DB {
     },
   ]
 
-  // Exemplo de árvore editada depois de verificada: a Figueira foi verificada pela Dra. Olívia
-  // e, ontem, o Lucas trocou a foto, acrescentou um apelido e uma informação sem fonte. A versão
-  // atual aguarda nova verificação; a verificada continua disponível na ficha e no filtro.
-  const trees = rawTrees.map(withVerifiedSnapshot).map((t): Tree =>
-    t.id !== 't-figueira'
-      ? t
-      : {
-          ...t,
+  // Exemplo de sugestão: a Figueira foi verificada pela Dra. Olívia e, ontem, o Lucas sugeriu trocar
+  // a foto, acrescentar um apelido e uma informação sem fonte. A versão verificada continua publicada;
+  // a sugestão só aparece para ele e para os especialistas até ser aprovada ou rejeitada.
+  const trees = rawTrees.map((t): Tree => {
+    const withContrib = { ...t, contributors: [t.createdBy] }
+    if (t.id !== 't-figueira') return withContrib
+    return {
+      ...withContrib,
+      suggestions: [{
+        id: 's-figueira', by: 'u-lucas', at: now - DAY, baseVerifiedAt: t.verifiedAt,
+        content: {
+          ...treeContent(t),
           nicknames: ['Figueira dos macacos', 'Casa dos bugios'],
           characteristics: `${t.characteristics} Dizem que ela tem mais de 80 anos e que foi plantada na inauguração do campus.`,
           photo: 'art:figueira:tarde:none',
-          verifiedBy: null, verifiedAt: null,
-          lastEditedBy: 'u-lucas', lastEditedAt: now - DAY, updatedAt: now - DAY,
         },
-  )
+      }],
+    }
+  })
 
   const d = (iso: string) => new Date(iso).getTime()
   const comments = [
@@ -154,6 +190,7 @@ export function createSeed(now = Date.now()): DB {
     { treeId: 't-figueira', userId: 'u-olivia', createdAt: now - 11 * DAY, text: 'Provavelmente bugios-ruivos (Alouatta guariba). Ótimo registro, ajuda a mostrar a importância da figueira para a fauna.' },
     { treeId: 't-hovenia', userId: 'u-olivia', createdAt: now - 5 * DAY, text: 'Atenção: espécie exótica invasora. Já avisei a prefeitura do campus.' },
     { treeId: 't-misterio', userId: 'u-lucas', createdAt: now - 3 * HOUR, text: 'Alguém sabe que árvore é essa? Passo por ela todo dia indo pra aula.' },
+    { treeId: 't-ipe', userId: 'u-promo', createdAt: now - 5 * HOUR, text: 'GANHE 1000 SEGUIDORES GRÁTIS!!! 🔥🔥 Chama no privado, promoção só hoje!!!' },
   ].map((c, i) => ({ ...c, id: `c-${i}`, sync: 'synced' as const }))
 
   const instants = [
@@ -168,8 +205,16 @@ export function createSeed(now = Date.now()): DB {
   const notifications = [
     { id: 'n-0', to: 'especialistas', treeId: 't-misterio', text: 'Novo ponto com identificação pendente: "Árvore de flores rosadas".', createdAt: now - 3 * HOUR, readBy: [] },
     { id: 'n-1', to: 'especialistas', treeId: 't-torta', text: 'Novo ponto com identificação pendente: "Árvore torta do RU6".', createdAt: now - 2 * DAY, readBy: [] },
-    { id: 'n-2', to: 'especialistas', treeId: 't-figueira', text: 'A árvore verificada "Figueira dos macacos" foi editada e aguarda nova verificação.', createdAt: now - DAY, readBy: [] },
+    { id: 'n-2', to: 'especialistas', treeId: 't-figueira', text: 'Nova sugestão de alteração em "Figueira dos macacos" aguardando revisão.', createdAt: now - DAY, readBy: [] },
+    { id: 'n-3', to: 'moderacao', treeId: 't-ipe', text: 'Nova denúncia: comentário em "Ipê do RU" (Spam ou propaganda).', createdAt: now - 4 * HOUR, readBy: [] },
   ]
 
-  return { version: DB_VERSION, users, trees, comments, instants, notifications }
+  const spam = comments.find((c) => c.userId === 'u-promo')!
+  const reports: Report[] = [{
+    id: 'r-0', kind: 'comment', targetId: spam.id, treeId: 't-ipe', reportedUser: 'u-promo', by: 'u-valentina',
+    reason: 'spam', details: 'Propaganda, nada a ver com a árvore.', at: now - 4 * HOUR,
+    status: 'aberta', resolution: null, resolvedBy: null, resolvedAt: null,
+  }]
+
+  return { version: DB_VERSION, users, trees, comments, instants, notifications, reports }
 }

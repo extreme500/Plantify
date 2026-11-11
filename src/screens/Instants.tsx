@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { Navigate, useNavigate, useParams } from 'react-router-dom'
-import { Camera as CameraIcon, CloudOff, ImageOff, Send, Trash2 } from 'lucide-react'
+import { Camera as CameraIcon, CloudOff, Flag, ImageOff, Send, Trash2 } from 'lucide-react'
 import { TAG_LABEL, type Instant, type InstantTag } from '../data/types'
 import { useMe, useStore } from '../store/store'
 import { timeAgo } from '../lib/util'
 import { Camera } from '../components/Camera'
 import { Avatar, Dialog, Empty, Photo, ScreenHeader, TreeTabs, userName } from '../components/ui'
 import { useGuard } from '../components/guard'
+import { ReportDialog } from '../components/ReportDialog'
 import { useSubmitFlow } from './Result'
 
 /** Feed de instants da árvore (fotos rápidas de visitas, florações etc.). */
@@ -21,6 +22,7 @@ export function Instants() {
   const deleteInstant = useStore((s) => s.deleteInstant)
   const toast = useStore((s) => s.toast)
   const [toDelete, setToDelete] = useState<Instant | null>(null)
+  const [toReport, setToReport] = useState<Instant | null>(null)
   const [tag, setTag] = useState<InstantTag | 'todos'>('todos')
 
   if (!tree) return <Navigate to="/" replace />
@@ -29,7 +31,7 @@ export function Instants() {
 
   return (
     <div className="screen">
-      <ScreenHeader title="Instants" sub={tree.nicknames[0]} back="/" />
+      <ScreenHeader title="Instants" sub={tree.nicknames[0]} back mapShortcut />
       <div className="scroll">
         <div className="pad stack">
           <button className="btn primary block" onClick={take}><CameraIcon size={22} /> Tirar um instant desta árvore</button>
@@ -57,6 +59,11 @@ export function Instants() {
                   </div>
                   {i.sync === 'pending' && <span className="badge sync" title="Aguardando conexão"><CloudOff size={14} /></span>}
                   {mine && <button className="icon-btn" aria-label="Excluir instant" onClick={() => setToDelete(i)}><Trash2 size={20} /></button>}
+                  {!mine && me && (
+                    <button className="icon-btn" aria-label="Denunciar instant" title="Denunciar" onClick={() => guard('', () => setToReport(i))}>
+                      <Flag size={18} color="var(--text-2)" />
+                    </button>
+                  )}
                 </div>
                 <Photo src={i.photo} alt={`Instant de ${userName(u)}`} />
                 <div className="ic-foot">
@@ -70,6 +77,7 @@ export function Instants() {
       </div>
       <TreeTabs treeId={tree.id} active="instants" />
 
+      {toReport && <ReportDialog kind="instant" targetId={toReport.id} onClose={() => setToReport(null)} />}
       {toDelete && (
         <Dialog title="Excluir instant?" onClose={() => setToDelete(null)}>
           <Photo src={toDelete.photo} alt="" style={{ width: '100%', maxHeight: 200, objectFit: 'cover', borderRadius: 12 }} />

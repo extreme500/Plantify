@@ -11,7 +11,7 @@ export function Settings() {
   const setSettings = useStore((s) => s.setSettings)
   const logout = useStore((s) => s.logout)
   const resetDemo = useStore((s) => s.resetDemo)
-  const setTutorialSeen = useStore((s) => s.setTutorialSeen)
+  const openTutorial = useStore((s) => s.openTutorial)
   const browserOnline = useStore((s) => s.browserOnline)
   const online = useOnline()
   const [confirmReset, setConfirmReset] = useState(false)
@@ -61,7 +61,7 @@ export function Settings() {
             </div>
           </div>
 
-          <button className="btn outline block" onClick={() => setTutorialSeen(false)}><BookOpen size={20} /> Como usar o app (tutorial)</button>
+          <button className="btn outline block" onClick={openTutorial}><BookOpen size={20} /> Como usar o app (tutorial)</button>
 
           <div className="card">
             <div className="section-title">Simulações do protótipo</div>

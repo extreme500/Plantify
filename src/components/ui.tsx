@@ -1,31 +1,47 @@
 import { type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  AlertTriangle, ArrowLeft, BadgeCheck, Camera, CheckCircle2, CloudOff, HelpCircle, History, Info,
-  Leaf, MessageCircle, Microscope, Search, X,
+  AlertTriangle, ArrowLeft, BadgeCheck, Camera, CheckCircle2, CloudOff, HelpCircle, Info,
+  Leaf, Map, MessageCircle, Microscope, Search, ShieldCheck, X,
 } from 'lucide-react'
 import type { Tree, User } from '../data/types'
-import { editedAfterVerification, treeStatus } from '../data/types'
+import { treeStatus } from '../data/types'
 import { initials } from '../lib/util'
 import { photoSrc } from '../lib/art'
 import { useStore } from '../store/store'
 
-export function ScreenHeader({ title, sub, back, onBack, right }: {
+/**
+ * Volta para a tela anterior (como o botão voltar do celular e do navegador). Se não houver tela
+ * anterior dentro do app (ex.: link aberto direto), vai para o mapa.
+ */
+export function useBack() {
+  const nav = useNavigate()
+  return () => {
+    const idx = (window.history.state as { idx?: number } | null)?.idx ?? 0
+    if (idx > 0) nav(-1)
+    else nav('/', { replace: true })
+  }
+}
+
+export function ScreenHeader({ title, sub, back, onBack, right, mapShortcut }: {
   title: string
   sub?: string
-  /** true = voltar no histórico; string = ir para a rota. */
-  back?: boolean | string
+  /** Mostra a seta de voltar, que leva à tela anterior. */
+  back?: boolean
   onBack?: () => void
   right?: ReactNode
+  /** Atalho explícito para o mapa (telas de uma árvore). */
+  mapShortcut?: boolean
 }) {
   const nav = useNavigate()
+  const goBack = useBack()
   return (
     <header className="header">
       {(back || onBack) && (
         <button
           className="icon-btn"
           aria-label="Voltar"
-          onClick={() => (onBack ? onBack() : typeof back === 'string' ? nav(back) : nav(-1))}
+          onClick={() => (onBack ? onBack() : goBack())}
         >
           <ArrowLeft size={24} />
         </button>
@@ -35,6 +51,11 @@ export function ScreenHeader({ title, sub, back, onBack, right }: {
         {sub && <div className="sub">{sub}</div>}
       </div>
       {right}
+      {mapShortcut && (
+        <button className="icon-btn" aria-label="Ir para o mapa" title="Ir para o mapa" onClick={() => nav('/')}>
+          <Map size={22} />
+        </button>
+      )}
     </header>
   )
 }
@@ -66,13 +87,11 @@ export function userName(u?: Pick<User, 'firstName' | 'lastName'> | null) {
 
 export function StatusBadges({ tree, compact }: { tree: Tree; compact?: boolean }) {
   const st = treeStatus(tree)
-  const edited = editedAfterVerification(tree)
   return (
     <span className="row" style={{ flexWrap: 'wrap', gap: 6 }}>
       {st === 'verificada' && <span className="badge verificada"><BadgeCheck size={14} /> Espécie verificada</span>}
-      {edited && <span className="badge identificada"><History size={14} /> {compact ? 'Editada após verificação' : 'Editada · aguardando nova verificação'}</span>}
-      {!edited && st === 'identificada' && <span className="badge identificada"><Search size={14} /> {compact ? 'Aguardando verificação' : 'Identificada · aguardando verificação'}</span>}
-      {!edited && st === 'pendente' && <span className="badge pendente"><HelpCircle size={14} /> Identificação pendente</span>}
+      {st === 'identificada' && <span className="badge identificada"><Search size={14} /> {compact ? 'Aguardando verificação' : 'Identificada · aguardando verificação'}</span>}
+      {st === 'pendente' && <span className="badge pendente"><HelpCircle size={14} /> Identificação pendente</span>}
       {tree.invasive && <span className="badge invasive"><AlertTriangle size={14} /> Exótica invasora</span>}
       {tree.sync === 'pending' && <span className="badge sync"><CloudOff size={14} /> Aguardando envio</span>}
     </span>
@@ -80,8 +99,13 @@ export function StatusBadges({ tree, compact }: { tree: Tree; compact?: boolean 
 }
 
 export function RoleBadge({ user }: { user?: User | null }) {
-  if (user?.role !== 'especialista') return null
-  return <span className="badge role" title="Especialista em Biologia/Agronomia"><Microscope size={12} /> Especialista</span>
+  if (!user) return null
+  return (
+    <>
+      {user.role === 'especialista' && <span className="badge role" title="Especialista em Biologia/Agronomia"><Microscope size={12} /> Especialista</span>}
+      {user.admin && <span className="badge role" title="Equipe de moderação"><ShieldCheck size={12} /> Moderação</span>}
+    </>
+  )
 }
 
 export function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {

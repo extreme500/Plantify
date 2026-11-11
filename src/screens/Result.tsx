@@ -43,6 +43,8 @@ export function Result() {
 
   const proceed = () => {
     if (st.kind === 'tree') nav('/', { replace: true, state: { focus: st.treeId } })
+    // Volta para os instants (a tela antes da câmera), sem empilhar uma cópia no histórico.
+    else if (((window.history.state as { idx?: number } | null)?.idx ?? 0) > 0) nav(-1)
     else nav(`/arvore/${st.treeId}/instants`, { replace: true })
   }
 

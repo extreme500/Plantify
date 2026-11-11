@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import {
   BadgeCheck, Camera, CloudOff, HelpCircle, Leaf, LocateFixed, MessageCircle, Microscope, Search,
-  Sprout, TreeDeciduous, Zap, AlertTriangle,
+  Sprout, TreeDeciduous, Zap, AlertTriangle, GitPullRequest, HandHelping, ShieldCheck, Ban, Flag,
 } from 'lucide-react'
 
 interface Step {
@@ -19,7 +19,7 @@ function Item({ icon, color, children }: { icon: ReactNode; color?: string; chil
   )
 }
 
-const STEPS: Step[] = [
+const COMMON: Step[] = [
   {
     title: 'Bem-vindo ao Plantify!',
     illus: <Sprout size={96} />,
@@ -41,6 +41,7 @@ const STEPS: Step[] = [
         <Item icon={<HelpCircle size={22} />} color="#d97706"><strong>Identificação pendente</strong><br /><span className="small muted">Ainda não sabemos o que é. Ajude!</span></Item>
         <Item icon={<AlertTriangle size={22} />} color="#dc2626"><strong>Exótica invasora</strong><br /><span className="small muted">Espécie que ameaça a flora nativa</span></Item>
         <Item icon={<LocateFixed size={22} />}>O botão <strong>Localizar</strong> centraliza o mapa em você (ponto azul).</Item>
+        <Item icon={<Sprout size={22} />}>O filtro <strong>Minhas</strong> mostra só as árvores que você cadastrou, editou ou verificou.</Item>
       </div>
     ),
   },
@@ -64,24 +65,63 @@ const STEPS: Step[] = [
         <Item icon={<Leaf size={22} />}><strong>Ficha</strong>: apelidos, nome científico, local, características e fontes.</Item>
         <Item icon={<Camera size={22} />}><strong>Instants</strong>: fotos rápidas de visitas, florações e frutos. Tire o seu!</Item>
         <Item icon={<MessageCircle size={22} />}><strong>Comentários</strong>: histórias, curiosidades e conversas sobre a árvore.</Item>
-      </div>
-    ),
-  },
-  {
-    title: 'Sem sinal? Sem problema.',
-    illus: <><CloudOff size={72} /><Microscope size={72} /></>,
-    body: (
-      <div className="stack">
-        <Item icon={<CloudOff size={22} />}>Sem internet, seus registros ficam <strong>salvos no aparelho</strong> e são enviados quando o sinal voltar.</Item>
-        <Item icon={<Microscope size={22} />}><strong>Especialistas</strong> (Biologia/Agronomia) recebem avisos de árvores pendentes e atribuem o selo de espécie verificada.</Item>
-        <p className="muted small" style={{ margin: 0 }}>Você pode rever este tutorial a qualquer momento em <strong>Configurações → Como usar o app</strong>.</p>
+        <p className="muted small" style={{ margin: 0 }}>A seta ← volta para a tela anterior; o ícone de mapa, no topo, leva direto ao mapa.</p>
       </div>
     ),
   },
 ]
 
-export function Tutorial({ onDone }: { onDone: () => void }) {
+const REVIEW_NOTE = <p className="muted small" style={{ margin: 0 }}>Você pode rever este tutorial a qualquer momento em <strong>Menu → Como usar o app</strong> ou nas Configurações.</p>
+
+const EXPLORER: Step = {
+  title: 'Colabore com a comunidade',
+  illus: <><HandHelping size={68} /><GitPullRequest size={64} /></>,
+  body: (
+    <div className="stack">
+      <Item icon={<HandHelping size={22} />}><strong>Ajude a identificar</strong> (no menu ☰): árvores de outras pessoas que ainda ninguém sabe o que são.</Item>
+      <Item icon={<GitPullRequest size={22} />}>Em árvores com selo de <strong>Espécie verificada</strong>, sua edição vira uma <strong>sugestão</strong>: ela só aparece para todos depois que um especialista aprovar.</Item>
+      <Item icon={<Sprout size={22} />}>Acompanhe tudo em <strong>Minhas contribuições</strong>.</Item>
+      <Item icon={<CloudOff size={22} />}>Sem internet, seus registros ficam <strong>salvos no aparelho</strong> e são enviados quando o sinal voltar.</Item>
+      {REVIEW_NOTE}
+    </div>
+  ),
+}
+
+const SPECIALIST: Step = {
+  title: 'Você é especialista',
+  illus: <><Microscope size={72} /><GitPullRequest size={64} /></>,
+  body: (
+    <div className="stack">
+      <Item icon={<Microscope size={22} />}>Sua fila fica em <strong>Menu → Curadoria</strong>: árvores identificadas <strong>a verificar</strong> e <strong>sugestões</strong> de alteração.</Item>
+      <Item icon={<GitPullRequest size={22} />}>Sugestões em árvores verificadas só são publicadas quando você <strong>aprova</strong>. Você vê o antes e o depois de cada campo.</Item>
+      <Item icon={<AlertTriangle size={22} />}>Na ficha, marque <strong>exóticas invasoras</strong>. Suas edições em árvores verificadas são publicadas direto.</Item>
+      <Item icon={<CloudOff size={22} />}>Sem internet, tudo fica salvo no aparelho e é enviado quando o sinal voltar.</Item>
+      {REVIEW_NOTE}
+    </div>
+  ),
+}
+
+const MODERATOR: Step = {
+  title: 'Moderação da comunidade',
+  illus: <><ShieldCheck size={72} /><Flag size={60} /></>,
+  body: (
+    <div className="stack">
+      <Item icon={<Flag size={22} />}>Qualquer pessoa pode <strong>denunciar</strong> comentários, instants e registros. As denúncias chegam em <strong>Menu → Moderação</strong>.</Item>
+      <Item icon={<ShieldCheck size={22} />}>Você decide: <strong>remover o conteúdo</strong> ou <strong>arquivar</strong> a denúncia.</Item>
+      <Item icon={<Ban size={22} />}>Em caso de abuso, <strong>suspenda a conta</strong>: a pessoa não consegue entrar nem contribuir. Dá para reativar depois.</Item>
+      {REVIEW_NOTE}
+    </div>
+  ),
+}
+
+/** Passos do tutorial conforme o perfil da conta. */
+function stepsFor(role: 'comum' | 'especialista', admin: boolean): Step[] {
+  return [...COMMON, role === 'especialista' ? SPECIALIST : EXPLORER, ...(admin ? [MODERATOR] : [])]
+}
+
+export function Tutorial({ onDone, role = 'comum', admin = false }: { onDone: () => void; role?: 'comum' | 'especialista'; admin?: boolean }) {
   const [i, setI] = useState(0)
+  const STEPS = stepsFor(role, admin)
   const step = STEPS[i]
   const last = i === STEPS.length - 1
   return (

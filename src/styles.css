@@ -405,6 +405,20 @@ button.photo-circle.has { border-style: solid; border-color: var(--primary); }
 }
 .drawer nav button:active { background: var(--surface-2); }
 .drawer nav .count { margin-left: auto; background: var(--danger); color: #fff; border-radius: 10px; padding: 0 8px; font-size: 0.8rem; }
+.drawer nav .count.neutral { background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border); }
+/* Diferença entre versões (revisão de sugestões) */
+.diff-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.diff-col { border-radius: 12px; padding: 10px 12px; font-size: 0.92rem; overflow-wrap: anywhere; }
+.diff-col.old { background: #fde8e8; color: #4a1d1d; }
+.diff-col.new { background: #e3f6e8; color: #12391f; }
+.theme-dark .diff-col.old { background: #3a1f1f; color: #f6d4d4; }
+.theme-dark .diff-col.new { background: #183626; color: #cdeed8; }
+.diff-col .diff-label { display: block; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.75; margin-bottom: 4px; }
+.diff-col img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 10px; display: block; }
+.msg-actions { border: none; background: none; padding: 2px; color: var(--text-2); display: inline-flex; border-radius: 8px; }
+.msg-actions:active { background: var(--surface-2); }
+.editing-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--primary-soft); font-size: 0.85rem; font-weight: 700; border-top: 1px solid var(--border); }
+
 
 /* ---------- Toasts ---------- */
 .toasts { position: absolute; left: 12px; right: 12px; top: 76px; z-index: 2000; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }

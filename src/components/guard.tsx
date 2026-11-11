@@ -3,11 +3,19 @@ import { LogIn, UserPlus } from 'lucide-react'
 import { useMe, useStore } from '../store/store'
 import { Sheet } from './ui'
 
-/** Executa a ação se houver usuário logado; senão abre o convite de "login rápido". */
+/**
+ * Executa a ação se houver usuário logado; senão abre o convite de "login rápido".
+ * Contas suspensas pela moderação não podem contribuir.
+ */
 export function useGuard() {
   const me = useMe()
   const ask = useStore((s) => s.setAskLogin)
-  return (message: string, action: () => void) => (me ? action() : ask(message))
+  const toast = useStore((s) => s.toast)
+  return (message: string, action: () => void) => {
+    if (!me) return ask(message)
+    if (me.banned) return toast('Sua conta está suspensa pela moderação e não pode contribuir.', 'warning')
+    action()
+  }
 }
 
 export function LoginPrompt() {

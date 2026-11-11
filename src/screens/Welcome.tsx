@@ -18,8 +18,8 @@ export function Welcome() {
   function submit(e: React.FormEvent) {
     e.preventDefault()
     if (!email.trim() || !password) { setError('Preencha e-mail e senha.'); return }
-    const u = login(email, password)
-    if (!u) { setError('E-mail/usuário ou senha incorretos.'); return }
+    const { user: u, error: loginError } = login(email, password)
+    if (!u) { setError(loginError ?? 'E-mail/usuário ou senha incorretos.'); return }
     toast(`Olá, ${u.firstName}!`, 'success')
     nav('/', { replace: true })
   }

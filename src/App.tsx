@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { Sprout } from 'lucide-react'
-import { useMyNotifications, useStore } from './store/store'
+import { useMe, useMyNotifications, useStore } from './store/store'
 import { GeoTracker } from './components/mapParts'
 import { Toasts } from './components/ui'
 import { LoginPrompt } from './components/guard'
@@ -16,7 +16,9 @@ import { Instants, NewInstant } from './screens/Instants'
 import { Comments } from './screens/Comments'
 import { Result } from './screens/Result'
 import { Settings } from './screens/Settings'
-import { Notifications, Pending } from './screens/Lists'
+import { Curation, MyContributions, Notifications, Pending } from './screens/Lists'
+import { SuggestionReview } from './screens/SuggestionReview'
+import { Moderation } from './screens/Moderation'
 
 function Connectivity() {
   const setBrowserOnline = useStore((s) => s.setBrowserOnline)
@@ -48,8 +50,10 @@ function LoginNotice() {
 
 function AppRoutes() {
   const session = useStore((s) => s.session)
-  const tutorialSeen = useStore((s) => s.tutorialSeen)
-  const setTutorialSeen = useStore((s) => s.setTutorialSeen)
+  const me = useMe()
+  // Tutorial no primeiro acesso de CADA conta (e do visitante), além de quando aberto pelo menu.
+  const showTutorial = useStore((s) => !!s.session && (s.tutorialOpen || !s.tutorialSeenBy.includes(s.session)))
+  const finishTutorial = useStore((s) => s.finishTutorial)
   const loggedIn = !!session && session !== 'guest'
 
   if (!session) {
@@ -69,6 +73,7 @@ function AppRoutes() {
         <Route path="/arvore/:id/instants" element={<Instants />} />
         <Route path="/arvore/:id/instants/novo" element={loggedIn ? <NewInstant /> : <Navigate to="/" replace />} />
         <Route path="/arvore/:id/comentarios" element={<Comments />} />
+        <Route path="/arvore/:id/sugestao/:sid" element={loggedIn ? <SuggestionReview /> : <Navigate to="/" replace />} />
         <Route path="/arvore/:id/editar" element={loggedIn ? <TreeForm mode="edit" /> : <Navigate to="/" replace />} />
         <Route path="/nova/rapido" element={loggedIn ? <QuickAdd /> : <Navigate to="/" replace />} />
         <Route path="/nova/detalhado" element={loggedIn ? <TreeForm mode="create" /> : <Navigate to="/" replace />} />
@@ -76,11 +81,14 @@ function AppRoutes() {
         <Route path="/configuracoes" element={<Settings />} />
         <Route path="/perfil/editar" element={loggedIn ? <Register edit /> : <Navigate to="/" replace />} />
         <Route path="/pendentes" element={<Pending />} />
+        <Route path="/curadoria" element={loggedIn ? <Curation /> : <Navigate to="/" replace />} />
+        <Route path="/minhas" element={loggedIn ? <MyContributions /> : <Navigate to="/" replace />} />
+        <Route path="/moderacao" element={loggedIn ? <Moderation /> : <Navigate to="/" replace />} />
         <Route path="/notificacoes" element={<Notifications />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <LoginPrompt />
-      {!tutorialSeen && <Tutorial onDone={() => setTutorialSeen(true)} />}
+      {showTutorial && <Tutorial key={session} role={me?.role} admin={!!me?.admin} onDone={finishTutorial} />}
     </>
   )
 }

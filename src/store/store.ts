@@ -1,7 +1,9 @@
 import { create } from 'zustand'
 import { get as idbGet, set as idbSet } from 'idb-keyval'
-import type { AppNotification, Comment, DB, Instant, Settings, Tree, TreeContent, User } from '../data/types'
-import { sameContent, treeContent } from '../data/types'
+import type {
+  AppNotification, Comment, DB, Instant, Report, ReportKind, ReportReason, Settings, Suggestion, Tree, TreeContent, User,
+} from '../data/types'
+import { REPORT_KIND_LABEL, REPORT_REASON_LABEL, sameContent, treeContent } from '../data/types'
 import { createSeed, DB_VERSION, migrateDb } from '../data/seed'
 import { SIMULATED_START } from '../data/campus'
 import { uid } from '../lib/util'
@@ -9,7 +11,8 @@ import { uid } from '../lib/util'
 const DB_KEY = 'plantify:db'
 const LS_SETTINGS = 'plantify:settings'
 const LS_SESSION = 'plantify:session'
-const LS_TUTORIAL = 'plantify:tutorialSeen'
+/** Contas (ou 'guest') que já viram o tutorial neste aparelho. */
+const LS_TUTORIAL = 'plantify:tutorialSeenBy'
 
 export interface Toast {
   id: string
@@ -25,8 +28,11 @@ export interface Position {
   accuracy?: number
 }
 
-/** unchanged: nada mudou · saved: edição comum · needs-verification: perdeu o selo · verified: edição já verificada. */
-export type EditResult = 'unchanged' | 'saved' | 'needs-verification' | 'verified'
+/**
+ * unchanged: nada mudou · saved: edição publicada · suggested: virou sugestão (árvore verificada) ·
+ * published-verified: especialista editou e a árvore continua verificada.
+ */
+export type EditResult = 'unchanged' | 'saved' | 'suggested' | 'published-verified'
 
 interface State {
   ready: boolean
@@ -34,7 +40,9 @@ interface State {
   settings: Settings
   /** id do usuário logado; 'guest' = explorando sem conta; null = tela de boas-vindas. */
   session: string | null
-  tutorialSeen: boolean
+  tutorialSeenBy: string[]
+  /** Tutorial aberto manualmente (menu ou configurações). */
+  tutorialOpen: boolean
   browserOnline: boolean
   position: Position
   simulatedPos: [number, number]
@@ -50,9 +58,10 @@ interface State {
   setBrowserOnline(v: boolean): void
   setPosition(p: Position): void
   setSimulatedPos(p: [number, number]): void
-  setTutorialSeen(v: boolean): void
+  openTutorial(): void
+  finishTutorial(): void
 
-  login(email: string, password: string): User | null
+  login(email: string, password: string): { user?: User; error?: string }
   enterAsGuest(): void
   register(data: Omit<User, 'id' | 'createdAt'>): { user?: User; error?: string }
   updateProfile(id: string, data: Partial<User>): void
@@ -61,17 +70,30 @@ interface State {
   addTree(data: TreeContent & Pick<Tree, 'createdBy'>): Tree
   updateTree(id: string, data: Partial<Tree>, opts?: { silent?: boolean }): void
   /**
-   * Salva uma edição feita pelo formulário "Completar informações".
-   * Se a árvore estava verificada, a versão atual perde o selo e o último registro verificado
-   * fica guardado — a não ser que um especialista escolha manter a edição verificada (`verify`).
+   * Salva o formulário "Completar informações". Em árvore verificada, a edição de um explorador vira
+   * uma sugestão (a versão verificada continua publicada); a de um especialista é publicada e segue verificada.
    */
-  editTree(id: string, content: TreeContent, opts?: { verify?: boolean }): EditResult
+  editTree(id: string, content: TreeContent): EditResult
+  cancelSuggestion(treeId: string, suggestionId: string): void
+  approveSuggestion(treeId: string, suggestionId: string): void
+  rejectSuggestion(treeId: string, suggestionId: string, reason: string): void
   verifyTree(id: string, verified: boolean): void
-  /** Curadoria: o alerta de invasora vale também para o último registro verificado. */
   setInvasive(id: string, invasive: boolean): void
+  deleteTree(id: string): void
+
   addComment(treeId: string, text: string): Comment
+  editComment(id: string, text: string): void
+  deleteComment(id: string): void
   addInstant(data: Pick<Instant, 'treeId' | 'photo' | 'tag' | 'caption'>): Instant
   deleteInstant(id: string): void
+
+  report(kind: ReportKind, targetId: string, reason: ReportReason, details: string): void
+  /** Moderação: remove o conteúdo denunciado e encerra a denúncia. */
+  removeReported(reportId: string): void
+  dismissReport(reportId: string): void
+  banUser(userId: string, reason: string): void
+  unbanUser(userId: string): void
+
   markNotificationsRead(): void
   syncPending(): number
   resetDemo(): Promise<void>
@@ -80,7 +102,9 @@ interface State {
 function loadJSON<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key)
-    return raw ? { ...fallback, ...JSON.parse(raw) } : fallback
+    if (!raw) return fallback
+    const parsed = JSON.parse(raw)
+    return Array.isArray(fallback) ? parsed : { ...fallback, ...parsed }
   } catch {
     return fallback
   }
@@ -110,6 +134,8 @@ function persistDb(db: DB) {
   }, 250)
 }
 
+const BAN_MESSAGE = 'Esta conta foi suspensa pela moderação por violar as regras da comunidade.'
+
 export const useStore = create<State>((set, get) => {
   /** Aplica uma alteração no "banco" local e agenda a gravação no IndexedDB. */
   const mutate = (fn: (db: DB) => DB) => {
@@ -118,16 +144,22 @@ export const useStore = create<State>((set, get) => {
     persistDb(db)
   }
   const me = () => get().session
+  const meUser = () => get().db.users.find((u) => u.id === me())
   const online = () => get().browserOnline && !get().settings.simulateOffline
   const notify = (n: Omit<AppNotification, 'id' | 'createdAt' | 'readBy'>) =>
     mutate((db) => ({ ...db, notifications: [{ ...n, id: uid('n-'), createdAt: Date.now(), readBy: [] }, ...db.notifications] }))
+  const tree = (id: string) => get().db.trees.find((t) => t.id === id)
+  const withContributor = (t: Tree, userId: string | null) =>
+    userId && !t.contributors.includes(userId) ? [...t.contributors, userId] : t.contributors
+  const resolve = (r: Report, resolution: string): Report => ({ ...r, status: 'resolvida', resolution, resolvedBy: me(), resolvedAt: Date.now() })
 
   return {
     ready: false,
-    db: { version: DB_VERSION, users: [], trees: [], comments: [], instants: [], notifications: [] },
+    db: { version: DB_VERSION, users: [], trees: [], comments: [], instants: [], notifications: [], reports: [] },
     settings: loadJSON(LS_SETTINGS, DEFAULT_SETTINGS),
     session: localStorage.getItem(LS_SESSION),
-    tutorialSeen: localStorage.getItem(LS_TUTORIAL) === '1',
+    tutorialSeenBy: loadJSON<string[]>(LS_TUTORIAL, []),
+    tutorialOpen: false,
     browserOnline: navigator.onLine,
     position: { pos: SIMULATED_START, source: 'simulado', reason: 'Obtendo localização…' },
     simulatedPos: SIMULATED_START,
@@ -154,14 +186,15 @@ export const useStore = create<State>((set, get) => {
         persistDb(db)
       }
       const session = get().session
-      const validSession = session === 'guest' || db.users.some((u) => u.id === session) ? session : null
+      const sessionUser = db.users.find((u) => u.id === session)
+      const validSession = session === 'guest' || (sessionUser && !sessionUser.banned) ? session : null
       set({ db, ready: true, session: validSession })
     },
 
     toast(text, kind = 'info') {
       const t = { id: uid('t'), text, kind }
       set({ toasts: [...get().toasts, t] })
-      setTimeout(() => get().dismissToast(t.id), 3800)
+      setTimeout(() => get().dismissToast(t.id), 4200)
     },
     dismissToast(id) {
       set({ toasts: get().toasts.filter((t) => t.id !== id) })
@@ -185,9 +218,14 @@ export const useStore = create<State>((set, get) => {
     setSimulatedPos(p) {
       set({ simulatedPos: p })
     },
-    setTutorialSeen(v) {
-      set({ tutorialSeen: v })
-      localStorage.setItem(LS_TUTORIAL, v ? '1' : '0')
+    openTutorial() {
+      set({ tutorialOpen: true })
+    },
+    finishTutorial() {
+      const id = me()
+      const seen = id && !get().tutorialSeenBy.includes(id) ? [...get().tutorialSeenBy, id] : get().tutorialSeenBy
+      set({ tutorialOpen: false, tutorialSeenBy: seen })
+      saveJSON(LS_TUTORIAL, seen)
     },
 
     login(email, password) {
@@ -195,11 +233,11 @@ export const useStore = create<State>((set, get) => {
       const u = get().db.users.find(
         (x) => x.password && (x.email.toLowerCase() === e || `${x.firstName} ${x.lastName}`.toLowerCase() === e) && x.password === password,
       )
-      if (u) {
-        set({ session: u.id })
-        localStorage.setItem(LS_SESSION, u.id)
-      }
-      return u ?? null
+      if (!u) return { error: 'E-mail/usuário ou senha incorretos.' }
+      if (u.banned) return { error: BAN_MESSAGE }
+      set({ session: u.id })
+      localStorage.setItem(LS_SESSION, u.id)
+      return { user: u }
     },
     enterAsGuest() {
       set({ session: 'guest' })
@@ -208,7 +246,7 @@ export const useStore = create<State>((set, get) => {
     register(data) {
       const email = data.email.trim().toLowerCase()
       if (get().db.users.some((u) => u.email.toLowerCase() === email)) return { error: 'Este e-mail já está cadastrado.' }
-      const user: User = { ...data, email, id: uid('u-'), createdAt: Date.now() }
+      const user: User = { ...data, email, admin: false, banned: null, id: uid('u-'), createdAt: Date.now() }
       mutate((db) => ({ ...db, users: [...db.users, user] }))
       set({ session: user.id })
       localStorage.setItem(LS_SESSION, user.id)
@@ -218,25 +256,25 @@ export const useStore = create<State>((set, get) => {
       mutate((db) => ({ ...db, users: db.users.map((u) => (u.id === id ? { ...u, ...data } : u)) }))
     },
     logout() {
-      set({ session: null })
+      set({ session: null, tutorialOpen: false })
       localStorage.removeItem(LS_SESSION)
     },
 
     addTree(data) {
       const now = Date.now()
-      const tree: Tree = {
+      const t: Tree = {
         ...data, id: uid('t-'), createdAt: now, updatedAt: now,
-        verifiedBy: null, verifiedAt: null, verifiedSnapshot: null, lastEditedBy: null, lastEditedAt: null,
-        sync: online() ? 'synced' : 'pending',
+        verifiedBy: null, verifiedAt: null, suggestions: [], contributors: [data.createdBy],
+        lastEditedBy: null, lastEditedAt: null, sync: online() ? 'synced' : 'pending',
       }
-      mutate((db) => ({ ...db, trees: [...db.trees, tree] }))
-      if (!tree.scientificName.trim()) {
-        notify({ to: 'especialistas', treeId: tree.id, text: `Novo ponto com identificação pendente: "${tree.nicknames[0]}".` })
+      mutate((db) => ({ ...db, trees: [...db.trees, t] }))
+      if (!t.scientificName.trim()) {
+        notify({ to: 'especialistas', treeId: t.id, text: `Novo ponto com identificação pendente: "${t.nicknames[0]}".` })
       }
-      return tree
+      return t
     },
     updateTree(id, data, opts) {
-      const before = get().db.trees.find((t) => t.id === id)
+      const before = tree(id)
       mutate((db) => ({
         ...db,
         trees: db.trees.map((t) => (t.id === id ? { ...t, ...data, updatedAt: Date.now(), sync: online() ? t.sync : 'pending' } : t)),
@@ -245,63 +283,99 @@ export const useStore = create<State>((set, get) => {
         notify({ to: before.createdBy, treeId: id, text: `Alguém completou informações de "${before.nicknames[0]}".` })
       }
     },
-    editTree(id, content, opts) {
-      const t = get().db.trees.find((x) => x.id === id)
-      if (!t) return 'unchanged'
-      const changed = !sameContent(content, t)
+    editTree(id, content) {
+      const t = tree(id)
+      const user = meUser()
+      if (!t || !user) return 'unchanged'
       const now = Date.now()
-      const edit = { ...treeContent(content), lastEditedBy: me(), lastEditedAt: now }
+      const mine = t.suggestions.find((s) => s.by === user.id)
 
-      if (opts?.verify) {
-        // Especialista escolheu "manter verificado": a edição vira o novo registro verificado.
-        if (!changed && t.verifiedBy) return 'unchanged'
-        get().updateTree(id, {
-          ...edit, verifiedBy: me(), verifiedAt: now,
-          verifiedSnapshot: { ...treeContent(content), verifiedBy: me()!, verifiedAt: now },
-        })
-        return 'verified'
+      if (t.verifiedBy && user.role !== 'especialista') {
+        // Árvore verificada: a edição do explorador vira sugestão; a versão publicada não muda.
+        if (sameContent(content, t)) {
+          if (mine) get().cancelSuggestion(id, mine.id)
+          return 'unchanged'
+        }
+        if (mine && sameContent(content, mine.content)) return 'unchanged'
+        const suggestion: Suggestion = { id: mine?.id ?? uid('s-'), by: user.id, at: now, content: treeContent(content), baseVerifiedAt: t.verifiedAt }
+        get().updateTree(id, { suggestions: [...t.suggestions.filter((s) => s.by !== user.id), suggestion] }, { silent: true })
+        if (!mine) notify({ to: 'especialistas', treeId: id, text: `Nova sugestão de alteração em "${t.nicknames[0]}" aguardando revisão.` })
+        return 'suggested'
       }
-      if (!changed) return 'unchanged'
+
+      if (sameContent(content, t)) return 'unchanged'
+      const edit = { ...treeContent(content), lastEditedBy: user.id, lastEditedAt: now, contributors: withContributor(t, user.id) }
       if (t.verifiedBy) {
-        // A versão atual perde o selo; o último registro verificado continua guardado.
-        const snapshot = t.verifiedSnapshot ?? { ...treeContent(t), verifiedBy: t.verifiedBy, verifiedAt: t.verifiedAt ?? now }
-        get().updateTree(id, { ...edit, verifiedBy: null, verifiedAt: null, verifiedSnapshot: snapshot })
-        notify({ to: 'especialistas', treeId: id, text: `A árvore verificada "${t.nicknames[0]}" foi editada e aguarda nova verificação.` })
-        return 'needs-verification'
+        // Especialista editando árvore verificada: publica e a árvore continua verificada.
+        get().updateTree(id, { ...edit, verifiedBy: user.id, verifiedAt: now })
+        return 'published-verified'
       }
       get().updateTree(id, edit)
       return 'saved'
     },
-    verifyTree(id, verified) {
-      const t = get().db.trees.find((x) => x.id === id)
+    cancelSuggestion(treeId, suggestionId) {
+      const t = tree(treeId)
       if (!t) return
+      get().updateTree(treeId, { suggestions: t.suggestions.filter((s) => s.id !== suggestionId) }, { silent: true })
+    },
+    approveSuggestion(treeId, suggestionId) {
+      const t = tree(treeId)
+      const s = t?.suggestions.find((x) => x.id === suggestionId)
+      if (!t || !s) return
       const now = Date.now()
-      get().updateTree(
-        id,
-        verified
-          ? { verifiedBy: me(), verifiedAt: now, verifiedSnapshot: { ...treeContent(t), verifiedBy: me()!, verifiedAt: now } }
-          : { verifiedBy: null, verifiedAt: null, verifiedSnapshot: null },
-        { silent: true },
-      )
+      get().updateTree(treeId, {
+        ...treeContent(s.content),
+        verifiedBy: me(), verifiedAt: now,
+        lastEditedBy: s.by, lastEditedAt: now,
+        contributors: withContributor(t, s.by),
+        suggestions: t.suggestions.filter((x) => x.id !== suggestionId),
+      }, { silent: true })
+      notify({ to: s.by, treeId, text: `Sua sugestão em "${t.nicknames[0]}" foi aprovada e já está publicada. Obrigado!` })
+    },
+    rejectSuggestion(treeId, suggestionId, reason) {
+      const t = tree(treeId)
+      const s = t?.suggestions.find((x) => x.id === suggestionId)
+      if (!t || !s) return
+      get().cancelSuggestion(treeId, suggestionId)
+      const why = reason.trim() ? ` Motivo: ${reason.trim()}` : ''
+      notify({ to: s.by, treeId, text: `Sua sugestão em "${t.nicknames[0]}" não foi aprovada.${why}` })
+    },
+    verifyTree(id, verified) {
+      const t = tree(id)
+      if (!t) return
+      get().updateTree(id, verified ? { verifiedBy: me(), verifiedAt: Date.now() } : { verifiedBy: null, verifiedAt: null }, { silent: true })
       if (verified && t.createdBy !== me()) {
         notify({ to: t.createdBy, treeId: id, text: `Seu registro "${t.nicknames[0]}" recebeu o selo de Espécie Verificada!` })
       }
     },
     setInvasive(id, invasive) {
-      const t = get().db.trees.find((x) => x.id === id)
-      if (!t) return
-      get().updateTree(
-        id,
-        { invasive, verifiedSnapshot: t.verifiedSnapshot ? { ...t.verifiedSnapshot, invasive } : null },
-        { silent: true },
-      )
+      get().updateTree(id, { invasive }, { silent: true })
     },
+    deleteTree(id) {
+      mutate((db) => ({
+        ...db,
+        trees: db.trees.filter((t) => t.id !== id),
+        comments: db.comments.filter((c) => c.treeId !== id),
+        instants: db.instants.filter((i) => i.treeId !== id),
+        notifications: db.notifications.filter((n) => n.treeId !== id),
+      }))
+    },
+
     addComment(treeId, text) {
       const c: Comment = { id: uid('c-'), treeId, userId: me()!, text, createdAt: Date.now(), sync: online() ? 'synced' : 'pending' }
       mutate((db) => ({ ...db, comments: [...db.comments, c] }))
-      const t = get().db.trees.find((x) => x.id === treeId)
+      const t = tree(treeId)
       if (t && t.createdBy !== me()) notify({ to: t.createdBy, treeId, text: `Novo comentário em "${t.nicknames[0]}".` })
       return c
+    },
+    editComment(id, text) {
+      mutate((db) => ({
+        ...db,
+        comments: db.comments.map((c) => (c.id === id ? { ...c, text, editedAt: Date.now(), sync: online() ? c.sync : 'pending' } : c)),
+      }))
+    },
+    deleteComment(id) {
+      mutate((db) => ({ ...db, comments: db.comments.filter((c) => c.id !== id) }))
     },
     addInstant(data) {
       const i: Instant = { ...data, id: uid('i-'), userId: me()!, createdAt: Date.now(), sync: online() ? 'synced' : 'pending' }
@@ -311,6 +385,51 @@ export const useStore = create<State>((set, get) => {
     deleteInstant(id) {
       mutate((db) => ({ ...db, instants: db.instants.filter((i) => i.id !== id) }))
     },
+
+    report(kind, targetId, reason, details) {
+      const db = get().db
+      const target =
+        kind === 'comment' ? db.comments.find((c) => c.id === targetId)
+          : kind === 'instant' ? db.instants.find((i) => i.id === targetId)
+            : db.trees.find((t) => t.id === targetId)
+      if (!target) return
+      const treeId = 'treeId' in target ? target.treeId : target.id
+      const reportedUser = 'userId' in target ? target.userId : target.createdBy
+      const r: Report = {
+        id: uid('r-'), kind, targetId, treeId, reportedUser, by: me()!, reason, details: details.trim(), at: Date.now(),
+        status: 'aberta', resolution: null, resolvedBy: null, resolvedAt: null,
+      }
+      mutate((d) => ({ ...d, reports: [r, ...d.reports] }))
+      const t = tree(treeId)
+      notify({ to: 'moderacao', treeId, text: `Nova denúncia: ${REPORT_KIND_LABEL[kind].toLowerCase()} em "${t?.nicknames[0] ?? 'árvore'}" (${REPORT_REASON_LABEL[reason]}).` })
+    },
+    removeReported(reportId) {
+      const r = get().db.reports.find((x) => x.id === reportId)
+      if (!r) return
+      if (r.kind === 'comment') get().deleteComment(r.targetId)
+      else if (r.kind === 'instant') get().deleteInstant(r.targetId)
+      else get().deleteTree(r.targetId)
+      // Outras denúncias do mesmo conteúdo também ficam resolvidas.
+      mutate((db) => ({
+        ...db,
+        reports: db.reports.map((x) => (x.targetId === r.targetId && x.status === 'aberta' ? resolve(x, 'Conteúdo removido') : x)),
+      }))
+    },
+    dismissReport(reportId) {
+      mutate((db) => ({ ...db, reports: db.reports.map((x) => (x.id === reportId ? resolve(x, 'Denúncia arquivada') : x)) }))
+    },
+    banUser(userId, reason) {
+      if (userId === me()) return
+      mutate((db) => ({
+        ...db,
+        users: db.users.map((u) => (u.id === userId ? { ...u, banned: { at: Date.now(), by: me()!, reason: reason.trim() } } : u)),
+        reports: db.reports.map((x) => (x.reportedUser === userId && x.status === 'aberta' ? resolve(x, 'Autor suspenso') : x)),
+      }))
+    },
+    unbanUser(userId) {
+      mutate((db) => ({ ...db, users: db.users.map((u) => (u.id === userId ? { ...u, banned: null } : u)) }))
+    },
+
     markNotificationsRead() {
       const id = me()
       if (!id) return
@@ -338,9 +457,9 @@ export const useStore = create<State>((set, get) => {
     async resetDemo() {
       const db = createSeed()
       await idbSet(DB_KEY, db)
-      set({ db, session: null })
+      set({ db, session: null, tutorialSeenBy: [], tutorialOpen: false })
       localStorage.removeItem(LS_SESSION)
-      get().setTutorialSeen(false)
+      saveJSON(LS_TUTORIAL, [])
     },
   }
 })
@@ -376,5 +495,19 @@ export function useMyNotifications(): AppNotification[] {
   const me = useMe()
   const all = useStore((s) => s.db.notifications)
   if (!me) return []
-  return all.filter((n) => n.to === me.id || (n.to === 'especialistas' && me.role === 'especialista'))
+  return all.filter(
+    (n) => n.to === me.id || (n.to === 'especialistas' && me.role === 'especialista') || (n.to === 'moderacao' && me.admin),
+  )
+}
+
+/** Itens da fila de curadoria do especialista: árvores a verificar + sugestões a revisar. */
+export function useCurationCounts() {
+  const trees = useStore((s) => s.db.trees)
+  const toVerify = trees.filter((t) => !t.verifiedBy && t.scientificName.trim()).length
+  const suggestions = trees.reduce((n, t) => n + t.suggestions.length, 0)
+  return { toVerify, suggestions, total: toVerify + suggestions }
+}
+
+export function useOpenReportsCount() {
+  return useStore((s) => s.db.reports.filter((r) => r.status === 'aberta').length)
 }

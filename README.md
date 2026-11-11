@@ -87,25 +87,37 @@ Observações:
 
 Para recomeçar do zero: *Configurações → Restaurar dados de demonstração*.
 
-## Roteiro sugerido de demonstração (cenários da Sprint 1)
+## Perfis
 
-1. **Primeiro acesso**: registre-se como *Explorador(a)*. O tutorial aparece (e pode ser revisto em Configurações).
+| Perfil | Como obter | O que faz |
+|---|---|---|
+| **Visitante** | "Explorar o mapa sem conta" | Vê mapa e fichas. Ao tentar contribuir, recebe o convite de login rápido. |
+| **Explorador(a)** | Cadastro | Cadastra árvores, completa fichas, posta instants e comentários. Em árvore **verificada**, a edição vira **sugestão**. |
+| **Especialista** | Cadastro (no protótipo; numa versão final viria do vínculo com Biologia/Agronomia) | *Menu → Curadoria*: verifica árvores, aprova/rejeita sugestões, marca exóticas invasoras. |
+| **Moderação** | Definida pela instituição (não se escolhe no cadastro) | *Menu → Moderação*: trata denúncias, remove conteúdo, suspende e reativa contas. |
+
+Conta de moderação da demonstração: **moderacao@plantify.app** / senha **moderacao**.
+
+## Roteiro sugerido de demonstração
+
+1. **Primeiro acesso**: registre-se como *Explorador(a)*. O tutorial aparece no primeiro acesso de cada conta, com um
+   passo específico para especialistas e moderação (e pode ser revisto em *Menu → Como usar o app*).
 2. **Valentina (consulta)**: toque no marcador da araucária *Amigo do Couto* (perto da Informática) → *Ver ficha*
    → aba **Comentários** (thread dos esboços) → aba **Instants** → *Tirar um instant*, marcar "Floração" e publicar.
-   Exclua o instant pela lixeira.
+   Exclua o instant pela lixeira. Nos comentários, o menu **⋯** permite editar ou excluir os seus e denunciar os dos outros.
 3. **Lucas (árvore inexistente)**: arraste o ponto roxo até um lugar sem árvore → *Adicionar árvore* → **Rápido**
    → tire a foto → *Salvar registro*. Ela entra no mapa como **Identificação pendente**.
 4. **Sem sinal**: ligue *Simular sem conexão*, faça um **Cadastro detalhado** (busque "ipê" para autocompletar
    espécie e família, toque em *Sugerir fontes abertas*) → aparece "Erro no envio". Desligue a simulação: o item sincroniza.
-5. **Dra. Olívia (validação)**: saia, crie uma conta **Especialista** → veja a notificação de ponto pendente
-   → abra a árvore → *Completar informações* → informe o nome científico → *Atribuir selo "Espécie verificada"*.
-   Especialistas também podem marcar **Exótica invasora**.
-6. **Edição de uma árvore verificada**: como usuário comum, abra uma árvore verificada → *Completar informações*
-   → altere algo e salve. A versão atual perde o selo e fica "aguardando nova verificação", mas a ficha ganha a opção
-   **Último registro verificado**, que mostra a árvore como estava quando recebeu o selo. No filtro **Verificadas**
-   do mapa, é essa versão pré-edição que aparece. Um especialista pode **Verificar esta edição** ou, ao editar,
-   escolher **Manter verificado**. A *Figueira dos macacos* já vem nesse estado nos dados de exemplo.
-7. Use os **filtros** do mapa (Verificadas, Identificadas, Pendentes, Invasoras) e o **Modo escuro**.
+5. **Sugestão em árvore verificada**: ainda como explorador, abra uma árvore verificada → **Sugerir alteração** → altere
+   e envie. A ficha continua mostrando a versão verificada; você vê o aviso "Você sugeriu alterações" e acompanha em
+   *Menu → Minhas contribuições* (ou no filtro **Minhas** do mapa).
+6. **Dra. Olívia (validação)**: saia, crie uma conta **Especialista** → *Menu → Curadoria*: na aba **A verificar**,
+   atribua o selo; na aba **Sugestões**, abra uma sugestão (a da *Figueira dos macacos* já vem nos dados), compare o
+   antes e o depois e **aprove** ou **rejeite**. As edições do especialista em árvores verificadas são publicadas direto.
+7. **Moderação**: entre com a conta de moderação → *Menu → Moderação*. Há uma denúncia de spam nos dados de exemplo:
+   remova o comentário ou **suspenda** o autor. Contas suspensas não conseguem entrar.
+8. Use os **filtros** do mapa (Minhas, Verificadas, Identificadas, Pendentes, Invasoras) e o **Modo escuro**.
 
 ## Estrutura
 

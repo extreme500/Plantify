@@ -2,11 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { MapContainer, Marker, useMapEvents } from 'react-leaflet'
 import {
-  BadgeCheck, Camera, ChevronRight, CloudOff, CloudUpload, Leaf, LocateFixed, Menu as MenuIcon, MessageCircle,
-  Navigation, Search, TreeDeciduous, Zap,
+  Camera, ChevronRight, CloudOff, CloudUpload, Leaf, LocateFixed, Menu as MenuIcon, MessageCircle,
+  Navigation, Search, Sprout, TreeDeciduous, Zap,
 } from 'lucide-react'
 import type { Tree } from '../data/types'
-import { editedAfterVerification, hasVerifiedVersion, treeStatus, verifiedVersion } from '../data/types'
+import { isMyTree, treeStatus } from '../data/types'
 import { CAMPUS_CENTER } from '../data/campus'
 import { useMe, useMyNotifications, useOnline, usePendingCount, useStore } from '../store/store'
 import { distance, formatDistance } from '../lib/util'
@@ -15,27 +15,23 @@ import { Dialog, Photo, Sheet, StatusBadges } from '../components/ui'
 import { Menu } from '../components/Menu'
 import { useGuard } from '../components/guard'
 
-type Filter = 'todas' | 'verificada' | 'identificada' | 'pendente' | 'invasora'
+type Filter = 'todas' | 'minhas' | 'verificada' | 'identificada' | 'pendente' | 'invasora'
 
 const FILTERS: { id: Filter; label: string; color?: string }[] = [
   { id: 'todas', label: 'Todas' },
+  { id: 'minhas', label: 'Minhas' },
   { id: 'verificada', label: 'Verificadas', color: '#15803d' },
   { id: 'identificada', label: 'Identificadas', color: '#0e7490' },
   { id: 'pendente', label: 'Pendentes', color: '#d97706' },
   { id: 'invasora', label: 'Invasoras', color: '#dc2626' },
 ]
 
-function matches(t: Tree, f: Filter) {
+function matches(t: Tree, f: Filter, meId: string | null) {
   if (f === 'todas') return true
   if (f === 'invasora') return t.invasive
-  // Árvores editadas depois de verificadas continuam em "Verificadas", pelo último registro verificado.
-  if (f === 'verificada') return hasVerifiedVersion(t)
+  // "Minhas": cadastradas, editadas, sugeridas ou verificadas pelo usuário.
+  if (f === 'minhas') return isMyTree(t, meId)
   return treeStatus(t) === f
-}
-
-/** Como a árvore aparece no mapa: no filtro "Verificadas", sempre pela versão verificada. */
-function displayVersion(t: Tree, f: Filter): Tree {
-  return f === 'verificada' ? verifiedVersion(t) ?? t : t
 }
 
 // Mantém a câmera do mapa e o filtro ao navegar para outras telas e voltar.
@@ -75,15 +71,13 @@ export function MapScreen() {
 
   // Ao voltar de um cadastro/ficha com { focus: id }, centraliza e abre a prévia da árvore.
   useEffect(() => {
-    const state = location.state as { focus?: string; filter?: Filter } | null
-    if (!state?.focus) return
-    const t = trees.find((x) => x.id === state.focus)
+    const focus = (location.state as { focus?: string } | null)?.focus
+    if (!focus) return
+    const t = trees.find((x) => x.id === focus)
     if (t) {
-      const f = state.filter ?? 'todas'
-      const shown = displayVersion(t, f)
-      setFilter(f)
+      setFilter('todas')
       setSelectedId(t.id)
-      setFlyTarget({ pos: [shown.lat, shown.lng], zoom: 18 })
+      setFlyTarget({ pos: [t.lat, t.lng], zoom: 18 })
     }
     nav('.', { replace: true, state: null })
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -97,11 +91,13 @@ export function MapScreen() {
     if (bar && chip) bar.scrollTo({ left: chip.offsetLeft - bar.offsetLeft - (bar.clientWidth - chip.offsetWidth) / 2, behavior: 'smooth' })
   }, [filter])
 
-  const visible = useMemo(() => trees.filter((t) => matches(t, filter)).map((t) => displayVersion(t, filter)), [trees, filter])
-  const counts = useMemo(() => Object.fromEntries(FILTERS.map((f) => [f.id, trees.filter((t) => matches(t, f.id)).length])), [trees])
-  const selected = visible.find((t) => t.id === selectedId) ?? trees.find((t) => t.id === selectedId) ?? null
-  // No filtro "Verificadas", uma árvore editada depois da verificação aparece pelo último registro verificado.
-  const selectedIsVerifiedView = !!selected && filter === 'verificada' && editedAfterVerification(trees.find((t) => t.id === selected.id)!)
+  const meId = me?.id ?? null
+  // O chip "Minhas" só aparece para quem está logado.
+  const filters = FILTERS.filter((f) => f.id !== 'minhas' || meId)
+  const activeFilter: Filter = filter === 'minhas' && !meId ? 'todas' : filter
+  const visible = useMemo(() => trees.filter((t) => matches(t, activeFilter, meId)), [trees, activeFilter, meId])
+  const counts = useMemo(() => Object.fromEntries(FILTERS.map((f) => [f.id, trees.filter((t) => matches(t, f.id, meId)).length])), [trees, meId])
+  const selected = trees.find((t) => t.id === selectedId) ?? null
 
   function startAdd() {
     guard('Para cadastrar uma árvore, entre na sua conta (leva poucos segundos).', () => {
@@ -125,7 +121,7 @@ export function MapScreen() {
           <FlyTo target={flyTarget?.pos ?? null} zoom={flyTarget?.zoom} />
           {visible.map((t) => (
             <Marker
-              key={t.id + t.updatedAt + filter + (t.id === selectedId)}
+              key={t.id + t.updatedAt + (t.id === selectedId)}
               position={[t.lat, t.lng]}
               icon={treeIcon(t, t.id === selectedId)}
               eventHandlers={{ click: () => setSelectedId(t.id) }}
@@ -154,9 +150,9 @@ export function MapScreen() {
           <span className="small muted" style={{ fontWeight: 700 }}>{visible.length} {visible.length === 1 ? 'árvore' : 'árvores'}</span>
         </div>
         <div className="chips" role="radiogroup" aria-label="Filtrar árvores" ref={chipsRef}>
-          {FILTERS.map((f) => (
-            <button key={f.id} role="radio" aria-checked={filter === f.id} className={`chip ${filter === f.id ? 'on' : ''}`} onClick={() => { setFilter(f.id); setSelectedId(null) }} style={{ boxShadow: 'var(--shadow)' }}>
-              {f.color && <span className="swatch" style={{ background: f.color, border: '2px solid #fff' }} />}
+          {filters.map((f) => (
+            <button key={f.id} role="radio" aria-checked={activeFilter === f.id} className={`chip ${activeFilter === f.id ? 'on' : ''}`} onClick={() => { setFilter(f.id); setSelectedId(null) }} style={{ boxShadow: 'var(--shadow)' }}>
+              {f.color && <span className="swatch" style={{ background: f.color, border: '2px solid #fff' }} />}{f.id === 'minhas' && <Sprout size={16} />}
               {f.label} <span style={{ opacity: 0.75 }}>{counts[f.id]}</span>
             </button>
           ))}
@@ -194,7 +190,7 @@ export function MapScreen() {
       )}
 
       {selected && (
-        <TreePreview tree={selected} verifiedView={selectedIsVerifiedView} onClose={() => setSelectedId(null)}
+        <TreePreview tree={selected} onClose={() => setSelectedId(null)}
           dist={distance(position.pos, [selected.lat, selected.lng])}
           nInstants={instants.filter((i) => i.treeId === selected.id).length}
           nComments={comments.filter((c) => c.treeId === selected.id).length}
@@ -241,8 +237,8 @@ export function MapScreen() {
 }
 
 /** Bottom sheet exibido ao tocar num marcador (fotos + taxonomia, como no diagrama de atividades). */
-function TreePreview({ tree, verifiedView, dist, nInstants, nComments, onClose }: {
-  tree: Tree; verifiedView: boolean; dist: number; nInstants: number; nComments: number; onClose: () => void
+function TreePreview({ tree, dist, nInstants, nComments, onClose }: {
+  tree: Tree; dist: number; nInstants: number; nComments: number; onClose: () => void
 }) {
   const nav = useNavigate()
   return (
@@ -255,17 +251,12 @@ function TreePreview({ tree, verifiedView, dist, nInstants, nComments, onClose }
             <h2 style={{ fontSize: '1.2rem' }}>{tree.nicknames[0]}</h2>
             <div className="italic muted">{tree.scientificName || 'Espécie ainda não identificada'}{tree.family && <span style={{ fontStyle: 'normal' }}> · {tree.family}</span>}</div>
             <StatusBadges tree={tree} compact />
-            {verifiedView && (
-              <div className="small" style={{ color: 'var(--verified)', fontWeight: 700 }}>
-                <BadgeCheck size={14} style={{ verticalAlign: '-2px' }} /> Último registro verificado · há uma edição mais recente
-              </div>
-            )}
             <div className="small muted">{formatDistance(dist)} de você</div>
           </div>
           <button className="icon-btn" aria-label="Fechar prévia" onClick={onClose} style={{ marginTop: -6 }}>✕</button>
         </div>
         <div className="row" style={{ marginTop: 14 }}>
-          <button className="btn primary grow" onClick={() => nav(verifiedView ? `/arvore/${tree.id}?versao=verificada` : `/arvore/${tree.id}`)}><Leaf size={20} /> Ver ficha</button>
+          <button className="btn primary grow" onClick={() => nav(`/arvore/${tree.id}`)}><Leaf size={20} /> Ver ficha</button>
           <button className="btn outline" onClick={() => nav(`/arvore/${tree.id}/instants`)} aria-label={`Instants (${nInstants})`}><Camera size={20} /> {nInstants}</button>
           <button className="btn outline" onClick={() => nav(`/arvore/${tree.id}/comentarios`)} aria-label={`Comentários (${nComments})`}><MessageCircle size={20} /> {nComments}</button>
         </div>
